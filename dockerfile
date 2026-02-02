@@ -218,21 +218,11 @@ RUN set -ex; \
     chown -R pok:pok /home/pok/arkserver/ShooterGame/Binaries/Win64/logs; \
     chmod -R 777 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs
 
+#Copy rootfs from base image
+COPY --link --chown=pok:pok /home/steam/.fex-emu/ /home/pok/.fex-emu/
+
 # Switch back to pok to run the entrypoint script
 USER pok
-# Set up rootfs
-WORKDIR /home/pok/.fex-emu/RootFS/
-
-RUN wget -O Ubuntu_22_04.tar.gz https://www.dropbox.com/scl/fi/16mhn3jrwvzapdw50gt20/Ubuntu_22_04.tar.gz?rlkey=4m256iahwtcijkpzcv8abn7nf
-
-RUN tar xzf Ubuntu_22_04.tar.gz
-
-RUN rm ./Ubuntu_22_04.tar.gz
-
-WORKDIR /home/pok/.fex-emu
-
-RUN echo '{"Config":{"RootFS":"Ubuntu_22_04"}}' > ./Config.json
-
 WORKDIR /home/pok
 
 # Use tini as the entrypoint  

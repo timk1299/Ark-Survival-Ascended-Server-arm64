@@ -1,5 +1,4 @@
-FROM ubuntu:22.04
-
+FROM internal/steamcmd-docker-arm64
 # IMPORTANT: These values are set at build time and CANNOT be changed at runtime
 # The container has fixed user IDs:
 # - 2_0_latest image: PUID=1000, PGID=1000
@@ -19,38 +18,41 @@ ENV WINEDLLOVERRIDES="version=n,b;vcrun2022=n,b"
 ENV WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx"
 ENV DISPLAY=:0.0
 
+USER root
+
 # Install necessary packages and setup for WineHQ repository
 RUN set -ex; \
-    dpkg --add-architecture i386; \
+    dpkg --add-architecture armhf; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-    jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
+    jq curl wget tar unzip nano gzip iproute2 procps dbus \
     tzdata \
     # tzdata package provides timezone database for TZ environment variable support \
-    lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
-    libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
-    libfontconfig1 libfontconfig1:i386 libfreetype6 libfreetype6:i386 \
-    libcups2 libcups2:i386 \
+    libc6:armhf libgcc-s1:armhf libglib2.0-0 libglib2.0-0:armhf libvulkan1 libvulkan1:armhf \
+    libnss3 libnss3:armhf libgconf-2-4 libgconf-2-4:armhf \
+    libfontconfig1 libfontconfig1:armhf libfreetype6 libfreetype6:armhf \
+    libcups2 libcups2:armhf \
     gnupg2 ca-certificates \
     # Add X server packages for headless operation
     xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1-mesa-glx \
     # Add necessary libraries for Wine and VC++
-    libldap-2.5-0:i386 libldap-2.5-0 libgnutls30:i386 libgnutls30 \
-    libxml2:i386 libxml2 libasound2:i386 libasound2 libpulse0:i386 libpulse0 \
-    libopenal1:i386 libopenal1 libncurses6:i386 libncurses6 \
+    libldap-2.5-0:armhf libldap-2.5-0 libgnutls30:armhf libgnutls30 \
+    libxml2:armhf libxml2 libasound2:armhf libasound2 libpulse0:armhf libpulse0 \
+    libopenal1:armhf libopenal1 libncurses6:armhf libncurses6 \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
     # cabextract is essential for winetricks vcrun2019 installation
-    cabextract winbind; \
-    # Setup WineHQ repository
-    mkdir -pm755 /etc/apt/keyrings; \
-    wget -O - https://dl.winehq.org/wine-builds/winehq.key | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key; \
-    wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources; \
-    apt-get update; \
+    cabextract winbind software-properties-common strace; \
     # Install latest stable Wine
-    apt-get install -y --install-recommends winehq-stable; \
-    # Cleanup to keep the image lean
+    apt-get install -y --install-recommends wine-stable
+
+# Cleanup to keep the image lean
+RUN set -ex; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
+
+# Copy steamcmd executable to /opt
+RUN mkdir -p /opt/steamcmd
+RUN cp -r /home/steam/Steam/* /opt/steamcmd/
 
 # Setup winetricks for Visual C++ Redistributable installation
 RUN set -ex; \
@@ -67,11 +69,6 @@ RUN set -ex; \
     mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer; \
     mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks; \
     mkdir -p /home/pok/arkserver/ShooterGame/Saved/Logs
-
-# Setup working directory for steamcmd
-WORKDIR /opt/steamcmd
-RUN set -ex; \
-    wget -qO- https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar zxvf -
 
 # Setup the Proton GE with proper version handling
 WORKDIR /usr/local/bin
@@ -110,7 +107,7 @@ RUN set -ex; \
 
 # Install tini
 ARG TINI_VERSION=v0.19.0
-ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-arm64 /tini
 RUN chmod +x /tini
 
 # Setup and pre-initialize Wine environment for AsaApi
@@ -223,7 +220,21 @@ RUN set -ex; \
 
 # Switch back to pok to run the entrypoint script
 USER pok
+# Set up rootfs
+WORKDIR /home/pok/.fex-emu/RootFS/
+
+RUN wget -O Ubuntu_22_04.tar.gz https://www.dropbox.com/scl/fi/16mhn3jrwvzapdw50gt20/Ubuntu_22_04.tar.gz?rlkey=4m256iahwtcijkpzcv8abn7nf
+
+RUN tar xzf Ubuntu_22_04.tar.gz
+
+RUN rm ./Ubuntu_22_04.tar.gz
+
+WORKDIR /home/pok/.fex-emu
+
+RUN echo '{"Config":{"RootFS":"Ubuntu_22_04"}}' > ./Config.json
+
 WORKDIR /home/pok
 
 # Use tini as the entrypoint  
-ENTRYPOINT ["/tini", "--", "/home/pok/scripts/init.sh"]
+ENTRYPOINT ["/tini", "--"]
+CMD ["FEXBash", "/home/pok/scripts/init.sh"]

@@ -219,7 +219,7 @@ RUN set -ex; \
     chmod -R 777 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs
 
 #Copy rootfs from base image
-COPY --link --chown=pok:pok /home/steam/.fex-emu/ /home/pok/.fex-emu/
+COPY --link --from=internal/steamcmd-docker-arm64 --chown=pok:pok /home/steam/.fex-emu/ /home/pok/.fex-emu/
 
 # Switch back to pok to run the entrypoint script
 USER pok

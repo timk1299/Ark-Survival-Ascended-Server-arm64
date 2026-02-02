@@ -12,6 +12,7 @@
 
 ## Introduction
 
+This image is based on https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git, but usable for arm64 architecture (only docker image is tested!).
 POK-manager.sh is a powerful and user-friendly script for managing Ark Survival Ascended Server instances using Docker. It simplifies the process of creating, starting, stopping, updating, and performing various operations on server instances, making it easy for both beginners and experienced users to manage their servers effectively.
 
 ### Key Features
@@ -645,7 +646,7 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: acekorneya/asa_server:2_0_latest
+    image: timk1299/asa_server:2_1_latest
     container_name: asa_my_instance
     restart: unless-stopped
     environment:

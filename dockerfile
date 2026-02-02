@@ -1,4 +1,4 @@
-FROM internal/steamcmd-docker-arm64
+FROM timk1299/steamcmd:arm64
 # IMPORTANT: These values are set at build time and CANNOT be changed at runtime
 # The container has fixed user IDs:
 # - 2_0_latest image: PUID=1000, PGID=1000

@@ -4,12 +4,6 @@
   <img src="https://ark.wiki.gg/images/thumb/0/0a/ASA_Logo_transparent.png/630px-ASA_Logo_transparent.png" alt="Ark Survival Ascended Logo" width="600">
 </p>
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/acekorneya/asa_server?style=for-the-badge&logo=docker&logoColor=white&color=2496ED)](https://hub.docker.com/r/acekorneya/asa_server)
-[![GitHub Stars](https://img.shields.io/github/stars/Acekorneya/Ark-Survival-Ascended-Server?style=for-the-badge&logo=github&color=yellow)](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/9GJKWjQuXy)
-[![Version](https://img.shields.io/badge/Version-2.1.xx-blue?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/acekorneyab)
-
 ## Introduction
 
 **This image is based on https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git, but usable for arm64 architecture (only docker image is tested!).

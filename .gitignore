@@ -5,6 +5,8 @@
 !.gitignore
 !/defaults/
 !/scripts/
+!/require_files/
+!/require_files/*
 !/changelog.txt
 !/Dockerfile
 !/docker-compose.yaml

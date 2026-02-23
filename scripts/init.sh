@@ -661,10 +661,10 @@ export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/24309
 export WINEDLLOVERRIDES="version=n,b"
 
 # Inject required DLL before initializing Proton/Wine to ensure it's present
-if [ -f "/home/pok/Require_Files/xaudio2_9redist.dll" ]; then
+if [ -f "/home/pok/require_files/xaudio2_9redist.dll" ]; then
   echo "Copying required xaudio2_9redist.dll into binaries folder..."
   mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/"
-  cp -f "/home/pok/Require_Files/xaudio2_9redist.dll" "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9redist.dll"
+  cp -f "/home/pok/require_files/xaudio2_9redist.dll" "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9redist.dll"
   chmod 755 "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9redist.dll"
 fi
 

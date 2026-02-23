@@ -664,8 +664,14 @@ export WINEDLLOVERRIDES="version=n,b"
 if [ -f "/home/pok/require_files/xaudio2_9redist.dll" ]; then
   echo "Copying required xaudio2_9redist.dll into binaries folder..."
   mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/"
+  
+  # Copy as original redistributable name
   cp -f "/home/pok/require_files/xaudio2_9redist.dll" "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9redist.dll"
   chmod 755 "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9redist.dll"
+  
+  # Also copy as standard xaudio2_9.dll (some mods explicitly look for this name)
+  cp -f "/home/pok/require_files/xaudio2_9redist.dll" "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9.dll"
+  chmod 755 "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9.dll"
 fi
 
 # Initialize Proton environment regardless of API setting

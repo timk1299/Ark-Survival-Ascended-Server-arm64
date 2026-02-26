@@ -32,8 +32,8 @@ initialize_proton_prefix() {
   mkdir -p "${STEAM_COMPAT_DATA_PATH}"
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx"
   
-  # Important: Ensure all parent directories also have proper permissions
-  chmod -R 755 "${STEAM_COMPAT_DATA_PATH}"
+  # Important: Ensure the top-level directory has proper permissions without recursing
+  chmod 755 "${STEAM_COMPAT_DATA_PATH}"
   
   # Create all necessary subdirectories with proper permissions
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
@@ -122,8 +122,8 @@ initialize_proton_prefix() {
   # Make sure tracked_files exists
   touch "${STEAM_COMPAT_DATA_PATH}/tracked_files" 2>/dev/null || true
   
-  # Ensure all created files have correct permissions
-  chmod -R 755 "${STEAM_COMPAT_DATA_PATH}/pfx" 2>/dev/null || true
+  # Ensure created files have correct permissions (non-recursive to save time on large prefixes)
+  chmod 755 "${STEAM_COMPAT_DATA_PATH}/pfx" 2>/dev/null || true
   
   # Set necessary environment variables
   export XDG_RUNTIME_DIR=/run/user/$(id -u)

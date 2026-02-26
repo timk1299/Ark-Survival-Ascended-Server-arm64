@@ -378,6 +378,12 @@ start_server() {
   export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
   export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
   
+  echo "Cleaning up any problematic Steam DLLs before launch..."
+  # Use the function from common.sh if available
+  if type cleanup_steam_dlls >/dev/null 2>&1; then
+    cleanup_steam_dlls "$ASA_DIR"
+  fi
+  
   echo "Launching server..."
   
   # Save the current directory to return to it after launching the server

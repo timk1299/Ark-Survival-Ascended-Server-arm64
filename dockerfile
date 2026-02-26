@@ -194,9 +194,10 @@ RUN set -ex; \
     rm -rf /tmp/vcredist
 
 USER root
-# Copy scripts and defaults folders into the container, ensure they are executable
+# Copy scripts, defaults, and Require_Files folders into the container, ensure they are executable
 COPY --chown=pok:pok scripts/ /home/pok/scripts/
 COPY --chown=pok:pok defaults/ /home/pok/defaults/
+COPY --chown=pok:pok require_files/ /home/pok/require_files/
 RUN chmod +x /home/pok/scripts/*.sh
 
 # Create essential runtime directories with proper permissions

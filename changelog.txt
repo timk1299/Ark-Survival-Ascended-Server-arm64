@@ -1,5 +1,10 @@
-# POK-Manager Changelog
-## Version 2.1.78 (Latest)
+## Version 2.1.79 (Latest)
+- **CRITICAL FIX**: Fixed major server startup delay (10-20 minutes on slow disks) by removing redundant recursive directory permission checks in `init.sh` and `common.sh`.
+- **CRITICAL FIX**: Fixed missing server audio dependency by automatically injecting `xaudio2_9redist.dll` (and renaming a copy to `xaudio2_9.dll`) into the `ShooterGame/Binaries/Win64/` directory during container startup, preventing server crashes.
+- Improved Dockerfile to copy `Require_Files` directly into the container during the build process.
+- **Improved Stability**: Added `cleanup_steam_dlls` execution directly before server launch in `launch_ASA.sh` to proactively purge problematic DLLs that are sometimes accidentally downloaded by SteamCMD, preventing random launch failures.
+
+## Version 2.1.78
 - Added staged SteamCMD download workflow with temp directory cleanup download to a temporary directory then we cp to the final location #104
 - Unified install/update scripts and POK-manager to use new workflow
 - Switched Epic matchmaking API calls to the new wildcard endpoint fixing -status command

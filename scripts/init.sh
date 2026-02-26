@@ -569,9 +569,9 @@ verify_proton_environment() {
   initialize_proton_prefix
   
   # Step 5: Set up directory permissions
-  echo "Setting correct permissions for all directories..."
-  chmod -R 755 "${STEAM_COMPAT_DATA_PATH}"
-  chmod -R 755 "$PROTON_BASE_DIR"
+  echo "Setting correct permissions for top-level directories..."
+  chmod 755 "${STEAM_COMPAT_DATA_PATH}"
+  chmod 755 "$PROTON_BASE_DIR"
   
   # Ensure synchronization
   sync
@@ -659,6 +659,20 @@ export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
 export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
 export WINEDLLOVERRIDES="version=n,b"
+
+# Inject required DLL before initializing Proton/Wine to ensure it's present
+if [ -f "/home/pok/require_files/xaudio2_9redist.dll" ]; then
+  echo "Copying required xaudio2_9redist.dll into binaries folder..."
+  mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/"
+  
+  # Copy as original redistributable name
+  cp -f "/home/pok/require_files/xaudio2_9redist.dll" "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9redist.dll"
+  chmod 755 "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9redist.dll"
+  
+  # Also copy as standard xaudio2_9.dll (some mods explicitly look for this name)
+  cp -f "/home/pok/require_files/xaudio2_9redist.dll" "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9.dll"
+  chmod 755 "${ASA_DIR}/ShooterGame/Binaries/Win64/xaudio2_9.dll"
+fi
 
 # Initialize Proton environment regardless of API setting
 verify_proton_environment

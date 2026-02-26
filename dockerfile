@@ -1,4 +1,4 @@
-FROM timk1299/steamcmd:arm64
+FROM timk1299/steamcmd:arm64-experimental
 # IMPORTANT: These values are set at build time and CANNOT be changed at runtime
 # The container has fixed user IDs:
 # - 2_0_latest image: PUID=1000, PGID=1000
@@ -25,23 +25,24 @@ RUN set -ex; \
     dpkg --add-architecture armhf; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-    jq curl wget tar unzip nano gzip iproute2 procps dbus \
+    jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
     tzdata \
     # tzdata package provides timezone database for TZ environment variable support \
-    libc6:armhf libgcc-s1:armhf libglib2.0-0 libglib2.0-0:armhf libvulkan1 libvulkan1:armhf \
-    libnss3 libnss3:armhf libgconf-2-4 libgconf-2-4:armhf \
+    libc6:armhf libgcc-s1:armhf libglib2.0-0t64 libglib2.0-0t64:armhf libvulkan1 libvulkan1:armhf \
+    libnss3 libnss3:armhf \
     libfontconfig1 libfontconfig1:armhf libfreetype6 libfreetype6:armhf \
-    libcups2 libcups2:armhf \
+    libcups2t64 libcups2t64:armhf \
     gnupg2 ca-certificates \
     # Add X server packages for headless operation
-    xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1-mesa-glx \
+    # instead of libgl1-mesa-glx install libgl1 libglx-mesa0
+    xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1 libglx-mesa0 \ 
     # Add necessary libraries for Wine and VC++
-    libldap-2.5-0:armhf libldap-2.5-0 libgnutls30:armhf libgnutls30 \
-    libxml2:armhf libxml2 libasound2:armhf libasound2 libpulse0:armhf libpulse0 \
+    libldap2 libldap2:armhf libgnutls30t64 libgnutls30t64:armhf \
+    libxml2:armhf libxml2 libasound2t64 libasound2t64:armhf libpulse0 libpulse0:armhf \
     libopenal1:armhf libopenal1 libncurses6:armhf libncurses6 \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
     # cabextract is essential for winetricks vcrun2019 installation
-    cabextract winbind software-properties-common strace; \
+    cabextract winbind; \
     # Install latest stable Wine
     apt-get install -y --install-recommends wine-stable
 
@@ -55,9 +56,9 @@ RUN mkdir -p /opt/steamcmd
 RUN cp -r /home/steam/Steam/* /opt/steamcmd/
 
 # Setup winetricks for Visual C++ Redistributable installation
-RUN set -ex; \
-    wget https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -O /usr/local/bin/winetricks && \
-    chmod +x /usr/local/bin/winetricks
+#RUN set -ex; \
+#    wget https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -O /usr/local/bin/winetricks && \
+#    chmod +x /usr/local/bin/winetricks
 
 # Create the pok group and user, assign home directory, and add to the 'users' group  
 RUN set -ex; \
@@ -169,9 +170,9 @@ RUN set -ex; \
     # Make AsaApi directories executable
     mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/AsaApi; \
     chmod -R 755 /home/pok/arkserver/ShooterGame/Binaries/Win64/AsaApi; \
-    chmod -R +x /home/pok/arkserver/ShooterGame/Binaries/Win64; \
+    chmod -R +x /home/pok/arkserver/ShooterGame/Binaries/Win64
     # Ensure winetricks can run for user pok
-    chmod +x /usr/local/bin/winetricks
+    #chmod +x /usr/local/bin/winetricks
 
 # Download and pre-install VC++ Redistributable (14.44.35211.0)
 USER pok

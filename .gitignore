@@ -3,13 +3,31 @@
 
 # Except the following files and directories
 !.gitignore
+!.gitattributes
+!.editorconfig
 !/defaults/
 !/scripts/
+!/scripts/helpers/
+!/scripts/helpers/**
+/scripts/helpers/node_modules/
+/scripts/helpers/__pycache__/
+/scripts/helpers/package-lock.json
+!/scripts/health_probe.sh
+!/scripts/health_server.py
+!/scripts/monitor_health.sh
+!/scripts/update_coordination.sh
 !/require_files/
 !/require_files/*
+!/logo/
+!/logo/*.webp
+!/test/
+!/test/**
+!/.github/
+!/.github/**
 !/changelog.txt
-!/Dockerfile
+!/dockerfile
 !/docker-compose.yaml
 !/LICENSE.txt
 !/POK-manager.sh
 !/README.md
+.gstack/

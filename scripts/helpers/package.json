@@ -1,0 +1,8 @@
+{
+  "name": "asa-steam-ticket-helper",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "steam-user": "^5.2.0"
+  }
+}

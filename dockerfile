@@ -6,7 +6,10 @@ FROM timk1299/steamcmd:arm64
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
-ARG PROTON_VERSION=GE-Proton10-32
+ARG PROTON_VERSION=GE-Proton10-34
+ARG TINI_VERSION=v0.19.0
+ARG RCON_VERSION=0.10.3
+ARG RCON_SHA256=6962a641ebf9a5957bd0cda1b8acf3e34a23686ae709f6c6a14ac3898521a5cc
 
 # Set a default timezone, can be overridden at runtime
 ENV TZ=UTC
@@ -24,33 +27,30 @@ USER root
 
 # Install necessary packages and setup for WineHQ repository
 RUN set -ex; \
-    dpkg --add-architecture armhf; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
     jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
     python3-minimal \
     tzdata \
     # tzdata package provides timezone database for TZ environment variable support \
-    libc6:armhf libgcc-s1:armhf libglib2.0-0t64 libglib2.0-0t64:armhf libvulkan1 libvulkan1:armhf \
-    libnss3 libnss3:armhf \
-    libfontconfig1 libfontconfig1:armhf libfreetype6 libfreetype6:armhf \
-    libcups2t64 libcups2t64:armhf \
+    libc6 libgcc-s1 libglib2.0-0t64 libvulkan1 \
+    libnss3 \
+    libfontconfig1 libfreetype6 \
+    libcups2t64 \
     gnupg2 ca-certificates \
     # Add X server packages for headless operation
     # instead of libgl1-mesa-glx install libgl1 libglx-mesa0
-    xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1 libglx-mesa0 \ 
+    xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1 libglx-mesa0 \
     # Add necessary libraries for Wine and VC++
-    libldap2 libldap2:armhf libgnutls30t64 libgnutls30t64:armhf \
-    libxml2:armhf libxml2 libasound2t64 libasound2t64:armhf libpulse0 libpulse0:armhf \
-    libopenal1:armhf libopenal1 libncurses6:armhf libncurses6 \
+    libldap2 libgnutls30t64 \
+    libxml2-16 libasound2t64 libpulse0 \
+    libopenal1 libncurses6 \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
     # cabextract is essential for winetricks vcrun2019 installation
-    cabextract winbind; \
+    cabextract winbind \
     # Install latest stable Wine
-    apt-get install -y --install-recommends wine-stable
-
-# Cleanup to keep the image lean
-RUN set -ex; \
+    wine; \
+    # Cleanup to keep the image lean
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
@@ -59,9 +59,9 @@ RUN mkdir -p /opt/steamcmd
 RUN cp -r /home/steam/Steam/* /opt/steamcmd/
 
 # Setup winetricks for Visual C++ Redistributable installation
-#RUN set -ex; \
-#    wget https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -O /usr/local/bin/winetricks && \
-#    chmod +x /usr/local/bin/winetricks
+RUN set -ex; \
+    wget https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -O /usr/local/bin/winetricks && \
+    chmod +x /usr/local/bin/winetricks
 
 # Create the pok group and user, assign home directory, and add to the 'users' group  
 RUN set -ex; \
@@ -103,15 +103,14 @@ RUN set -ex; \
 WORKDIR /tmp/
 # Setup rcon-cli
 RUN set -ex; \
-    wget -qO /tmp/rcon.tar.gz https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz; \
-    echo "6962a641ebf9a5957bd0cda1b8acf3e34a23686ae709f6c6a14ac3898521a5cc  /tmp/rcon.tar.gz" | sha256sum -c -; \
+    wget -qO /tmp/rcon.tar.gz https://github.com/gorcon/rcon-cli/releases/download/v${RCON_VERSION}/rcon-${RCON_VERSION}-amd64_linux.tar.gz; \
+    echo "${RCON_SHA256}  /tmp/rcon.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/rcon.tar.gz -C /tmp; \
-    mv /tmp/rcon-0.10.3-amd64_linux/rcon /usr/local/bin/rcon-cli; \
+    mv /tmp/rcon-${RCON_VERSION}-amd64_linux/rcon /usr/local/bin/rcon-cli; \
     chmod +x /usr/local/bin/rcon-cli; \
-    rm -rf /tmp/rcon.tar.gz /tmp/rcon-0.10.3-amd64_linux
+    rm -rf /tmp/rcon.tar.gz /tmp/rcon-${RCON_VERSION}-amd64_linux
 
 # Install tini
-ARG TINI_VERSION=v0.19.0
 ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-arm64 /tini
 RUN chmod +x /tini
 
@@ -174,11 +173,11 @@ RUN set -ex; \
     # Make AsaApi directories executable
     mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/AsaApi; \
     chmod -R 755 /home/pok/arkserver/ShooterGame/Binaries/Win64/AsaApi; \
-    chmod -R +x /home/pok/arkserver/ShooterGame/Binaries/Win64
+    chmod -R +x /home/pok/arkserver/ShooterGame/Binaries/Win64; \
     # Ensure winetricks can run for user pok
-    #chmod +x /usr/local/bin/winetricks
+    chmod +x /usr/local/bin/winetricks
 
-# Download and pre-install VC++ Redistributable (14.44.35211.0)
+# Download and pre-install VC++ Redistributable
 USER pok
 RUN set -ex; \
     mkdir -p /tmp/vcredist; \
@@ -232,7 +231,7 @@ RUN set -ex; \
     chmod -R 775 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs
 
 #Copy rootfs from base image
-COPY --link --from=timk1299/steamcmd:arm64 --chown=pok:pok /home/steam/.fex-emu/ /home/pok/.fex-emu/
+COPY --from=timk1299/steamcmd:arm64 --chown=pok:pok /home/steam/.fex-emu/ /home/pok/.fex-emu/
 
 # Switch back to pok to run the entrypoint script
 USER pok

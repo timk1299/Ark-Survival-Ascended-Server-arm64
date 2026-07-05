@@ -6,7 +6,7 @@ FROM timk1299/steamcmd:arm64
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
-ARG PROTON_VERSION=GE-Proton10-34
+ARG PROTON_VERSION=GE-Proton11-1
 ARG TINI_VERSION=v0.19.0
 ARG RCON_VERSION=0.10.3
 ARG RCON_SHA256=6962a641ebf9a5957bd0cda1b8acf3e34a23686ae709f6c6a14ac3898521a5cc

@@ -78,6 +78,7 @@ After these steps, you'll have a working Ark Survival Ascended server setup. See
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
 - [Critical System Requirements](#critical-system-requirements)
+  - [arm64 Performance Tuning](#arm64-performance-tuning)
 - [Installation](#installation)
 - [Usage](#usage)
   - [Commands](#commands)
@@ -148,6 +149,15 @@ You have two methods to apply this setting:
    ```
 
 ⚠️ **IMPORTANT NOTE**: Without this setting, your ARK server container WILL crash or fail to start, typically with "Allocator Stats" errors in the logs. This is a host-level requirement that cannot be fixed within the container itself.
+
+### arm64 Performance Tuning
+
+On arm64 the server's x86_64 code is translated by FEX inside GE-Proton, so CPU speed matters more than on x86. Proton already disables Wine/DXVK debug logging by default. These settings can help:
+
+- **Keep `CPU_OPTIMIZATION=FALSE`.** Setting it to `TRUE` disables Proton's fsync/esync, which normally make Wine faster, and sets `WINE_CPU_TOPOLOGY=FALSE`, which is not a valid value for that variable.
+- **CPUs with fast and slow cores (big.LITTLE, e.g. RK3588):** pin the container to the fast cores in your compose file, e.g. `cpuset: "4-7"`. Proton passes the container's CPU set to Wine automatically. Check which cores are the fast ones with `lscpu -e` (higher `MAXMHZ`).
+- **Memory:** plan for 16 GB per instance as listed above. On boards with less RAM, add swap (or zram) on the host so the server isn't killed while loading; `mem_limit` in the compose file only caps memory, it doesn't reduce what ASA needs.
+- **Experimental – x86 memory-ordering emulation:** FEX emulates x86's stricter memory ordering (TSO), which costs performance. Adding `STEAM_COMPAT_FEX_CONFIG=Multiblock:1` to the environment turns TSO emulation off. That can be noticeably faster, but multithreaded code may then crash or misbehave. Only try it with backups, and remove it if you see crashes.
 
 ## Installation
 
@@ -671,7 +681,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `API`                         | `FALSE`           | Set to TRUE to install and use AsaApi, FALSE to disable AsaApi                |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
-| `CPU_OPTIMIZATION`            | `FALSE`           | Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable |
+| `CPU_OPTIMIZATION`            | `FALSE`           | Keep `FALSE` on arm64: `TRUE` disables fsync/esync (see [arm64 Performance Tuning](#arm64-performance-tuning)) |
 | `UPDATE_SERVER`               | `TRUE`            | Enable shared automatic updates; if any configured instance disables this, automatic updates are disabled for the shared installation |
 | `UPDATE_COORDINATION_ROLE`    | auto-assigned     | Only written for multi-instance auto-update setups; one instance becomes `MASTER`, others become `FOLLOWER` |
 | `UPDATE_COORDINATION_PRIORITY`| auto-assigned     | Only written for multi-instance auto-update setups; lower number means earlier failover priority |
@@ -744,7 +754,7 @@ services:
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - API=FALSE                            # Set to TRUE to install and use AsaApi, FALSE to disable AsaApi
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
-      - CPU_OPTIMIZATION=FALSE               # Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable
+      - CPU_OPTIMIZATION=FALSE               # Keep FALSE on arm64 (see "arm64 Performance Tuning")
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Automatic updates require TRUE on every configured shared instance
       # Only used when more than one instance has UPDATE_SERVER=TRUE.

@@ -6,7 +6,7 @@ FROM timk1299/steamcmd:arm64
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
-ARG PROTON_VERSION=GE-Proton11-1
+ARG PROTON_VERSION=GE-Proton11-11
 ARG TINI_VERSION=v0.19.0
 ARG RCON_VERSION=0.10.3
 ARG RCON_SHA256=6962a641ebf9a5957bd0cda1b8acf3e34a23686ae709f6c6a14ac3898521a5cc
@@ -198,8 +198,8 @@ RUN set -ex; \
     rm -rf /tmp/vcredist
 
 USER root
-# Install Node.js 20 LTS for EOS token helpers
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+# Install Node.js 24 LTS for EOS token helpers
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -242,4 +242,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30m --retries=3 \
 
 # Use tini as the entrypoint  
 ENTRYPOINT ["/tini", "--"]
-CMD ["FEXBash", "/home/pok/scripts/init.sh"]
+CMD ["FEX", "/bin/bash", "/home/pok/scripts/init.sh"]

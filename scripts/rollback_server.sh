@@ -100,7 +100,7 @@ rollback_download_heartbeat() {
 
 download_rollback_manifest() {
   local manifest="$1"
-  local steamcmd_bin="${STEAMCMD_BIN:-/opt/steamcmd/steamcmd.sh}"
+  local steamcmd_bin="${STEAMCMD_BIN:-/usr/local/bin/steamcmd}"
   local steamcmd_root="${STEAMCMD_ROOT:-/opt/steamcmd}"
   local -a login_args=()
   local heartbeat_pid=""

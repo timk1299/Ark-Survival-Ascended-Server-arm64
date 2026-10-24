@@ -322,8 +322,8 @@ initialize_proton_prefix() {
     return 1
   fi
 
-  # The image build can't run FEX, so the VC++ redistributable shipped in the
-  # image is installed here through the same pinned Proton.
+  # Wine can't run during the image build, so the VC++ redistributable shipped
+  # in the image is installed here through the same pinned Proton.
   local vcredist="${POK_VCREDIST_EXE:-/home/pok/vcredist/vc_redist.x64.exe}"
   local system32="$WINEPREFIX/drive_c/windows/system32"
   if [ -f "$vcredist" ]; then
@@ -690,7 +690,7 @@ get_current_build_id() {
     echo "[DEBUG] Retrieving build ID directly from SteamCMD (not using API)..."
   fi
   
-  local steamcmd_output=$(/opt/steamcmd/steamcmd.sh +login anonymous +app_info_print ${APPID} +quit 2>/dev/null)
+  local steamcmd_output=$("${STEAMCMD_BIN:-/usr/local/bin/steamcmd}" +login anonymous +app_info_print ${APPID} +quit 2>/dev/null)
   
   # More precise extraction to avoid multiple matches
   # 1. Find the "branches" section
@@ -961,7 +961,7 @@ steamcmd_download_to_dir() {
     echo "[INFO] SteamCMD validation enabled for this run"
   fi
 
-  /opt/steamcmd/steamcmd.sh \
+  "${STEAMCMD_BIN:-/usr/local/bin/steamcmd}" \
     +force_install_dir "$target_dir" \
     +@sSteamCmdForcePlatformType "windows" \
     +login "$USERNAME" \

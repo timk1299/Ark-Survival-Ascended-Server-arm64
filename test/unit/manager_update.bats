@@ -74,14 +74,14 @@ load '../test_helper/project.bash'
     }
 
     update_server_files_and_docker
-    grep -- "-n docker pull acekorneya/asa_server:2_1_beta" "$BASE_DIR/sudo.log"
+    grep -- "-n docker pull timk1299/asa_server_arm64:2_1_beta" "$BASE_DIR/sudo.log"
     grep -- "-n docker run" "$BASE_DIR/sudo.log"
     grep -- "-n docker exec pok_update_temp_container /home/pok/scripts/install_server.sh" "$BASE_DIR/sudo.log"
   '
 
   assert_success
   assert_output --partial "Update process completed successfully"
-  assert_output --partial "-n docker pull acekorneya/asa_server:2_1_beta"
+  assert_output --partial "-n docker pull timk1299/asa_server_arm64:2_1_beta"
 }
 
 @test "manager update returns failure after SteamCMD retries and still removes its container" {

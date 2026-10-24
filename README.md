@@ -6,7 +6,7 @@
 
 ## Introduction
 
-**This image is based on https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git, but usable for arm64 architecture (only docker image is tested!).**
+**This image is based on https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git, but usable for arm64 architecture.** ASA runs on the aarch64 build of GE-Proton; SteamCMD runs through FEX. POK-manager.sh uses this fork's images (`timk1299/asa_server_arm64`) and updates itself from this repository.
 
 POK-manager.sh is a powerful and user-friendly script for managing Ark Survival Ascended Server instances using Docker. It simplifies the process of creating, starting, stopping, updating, and performing various operations on server instances, making it easy for both beginners and experienced users to manage their servers effectively.
 
@@ -57,7 +57,7 @@ mkdir -p ~/asa_server
 cd ~/asa_server
 
 # Download and set up POK-manager
-git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && \
+git clone https://github.com/timk1299/Ark-Survival-Ascended-Server-arm64.git Ark-Survival-Ascended-Server && \
 mv Ark-Survival-Ascended-Server/POK-manager.sh . && \
 chmod +x POK-manager.sh && \
 mv Ark-Survival-Ascended-Server/defaults . && \
@@ -209,7 +209,7 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
 
 5. **Download and set up POK-manager.sh**:
    ```bash
-   git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && \
+   git clone https://github.com/timk1299/Ark-Survival-Ascended-Server-arm64.git Ark-Survival-Ascended-Server && \
    mv Ark-Survival-Ascended-Server/POK-manager.sh . && \
    chmod +x POK-manager.sh && \
    mv Ark-Survival-Ascended-Server/defaults . && \
@@ -241,12 +241,12 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
 1. **For experienced users** who want to download and set up in a single step:
    - Option 1: Run the following command to download and set up POK-manager.sh:
      ```bash
-     git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 7777:7777 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
+     git clone https://github.com/timk1299/Ark-Survival-Ascended-Server-arm64.git Ark-Survival-Ascended-Server && sudo chown -R 7777:7777 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
      ```
 
    - Option 2: Follow these step-by-step commands:
      ```bash
-     git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git
+     git clone https://github.com/timk1299/Ark-Survival-Ascended-Server-arm64.git Ark-Survival-Ascended-Server
      sudo chown -R 7777:7777 Ark-Survival-Ascended-Server
      sudo mv Ark-Survival-Ascended-Server/POK-manager.sh .
      sudo chmod +x POK-manager.sh
@@ -259,8 +259,8 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
 If you want to test the latest features before they're officially released, you can install from the beta branch. Note that beta versions may contain experimental features and are not guaranteed to be stable.
 
 ```bash
-# Clone from the beta branch (for testing purposes)
-git clone -b beta https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && \
+# Clone from the experimental branch (for testing purposes)
+git clone -b experimental https://github.com/timk1299/Ark-Survival-Ascended-Server-arm64.git Ark-Survival-Ascended-Server && \
 mv Ark-Survival-Ascended-Server/POK-manager.sh . && \
 chmod +x POK-manager.sh && \
 mv Ark-Survival-Ascended-Server/defaults . && \
@@ -632,8 +632,8 @@ sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
 If you're upgrading from an earlier version, you have these options:
 
 1. **Automatic Detection:** The script will automatically detect your file ownership and use the appropriate Docker image:
-   - Files owned by 1000:1000 → Uses acekorneya/asa_server:2_0_latest (compatible with older settings)
-   - Files owned by other UIDs → Uses acekorneya/asa_server:2_1_latest (new default)
+   - Files owned by 1000:1000 → Uses timk1299/asa_server_arm64:2_0_latest (compatible with older settings; not published for arm64 yet)
+   - Files owned by other UIDs → Uses timk1299/asa_server_arm64:2_1_latest (new default)
 
 2. **Option 1: Continue using 1000:1000 (backward compatibility):**
    ```bash
@@ -733,7 +733,7 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: timk1299/asa_server:2_1_latest
+    image: timk1299/asa_server_arm64:2_1_latest
     container_name: asa_my_instance
     restart: unless-stopped
     stop_grace_period: 210s              # Derived as (2 × SAVE_WAIT_SECONDS) + 90 seconds
@@ -1248,8 +1248,9 @@ POK-manager supports multiple Docker image versions to ensure backward compatibi
 |-----------|-----------------|-------------|
 | `2_0_latest` | 1000:1000 | Legacy image for backward compatibility with existing installations |
 | `2_1_latest` | 7777:7777 | New default image that avoids conflicts with common user IDs |
-| `2_0_beta` | 1000:1000 | Beta version of the legacy image |
-| `2_1_beta` | 7777:7777 | Beta version of the new image |
+| `2_1_experimental` | 7777:7777 | Beta version of the new image (used in beta mode) |
+
+This arm64 fork publishes `2_1_latest` and `2_1_experimental` as `timk1299/asa_server_arm64`; the legacy `2_0` images are not published yet.
 
 The script automatically selects the appropriate image based on your file ownership:
 - If your server files are owned by UID:GID 1000:1000, it will use the 2_0 image
@@ -1283,7 +1284,7 @@ must match the PUID:PGID values of the Docker image you're using.
 - [Docker Installation](https://docs.docker.com/engine/install/)
 - [Docker Compose Installation](https://docs.docker.com/compose/install/)
 - [Git Downloads](https://git-scm.com/downloads)
-- [Ark Survival Ascended Server Docker Image](https://hub.docker.com/r/acekorneya/asa_server)
+- [Ark Survival Ascended Server Docker Image (arm64)](https://hub.docker.com/r/timk1299/asa_server_arm64)
 - [Server Configuration](https://ark.wiki.gg/wiki/Server_configuration)
 - [POK-manager.sh GitHub Repository](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
 

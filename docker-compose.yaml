@@ -3,7 +3,7 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: timk1299/asa_server:2_1_latest
+    image: timk1299/asa_server_arm64:2_1_latest
     container_name: asa_instance_name
     restart: unless-stopped
     stop_grace_period: 210s

@@ -2,6 +2,10 @@
 # Version information
 POK_MANAGER_VERSION="2.1.82"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
+# arm64 fork: Docker image and GitHub repository used for images, self-updates and changelogs
+POK_IMAGE_REPO="timk1299/asa_server_arm64"
+POK_GITHUB_REPO="timk1299/Ark-Survival-Ascended-Server-arm64"
+POK_BETA_NAME="experimental" # image tag suffix and git branch used in beta mode
 
 # Get the base directory for the script
 if [[ -z "${BASE_DIR:-}" ]]; then
@@ -784,7 +788,7 @@ update_docker_compose_image_tag() {
   fi
   
   # Update the image tag in the docker-compose file
-  sed -i "s|image: acekorneya/asa_server:.*|image: acekorneya/asa_server:${new_tag}|g" "$compose_file"
+  sed -i "s|image: [^ ]*asa_server[a-z0-9_]*:.*|image: ${POK_IMAGE_REPO}:${new_tag}|g" "$compose_file"
   
   if [ $? -eq 0 ]; then
     echo "✅ Updated image tag to '${new_tag}' in: $(basename "$compose_file")"
@@ -1572,7 +1576,7 @@ root_tasks() {
 pull_docker_image() {
   local instance_name="$1"
   local image_tag=$(get_docker_image_tag "$instance_name")
-  local image_name="acekorneya/asa_server:${image_tag}"
+  local image_name="${POK_IMAGE_REPO}:${image_tag}"
   echo "Pulling Docker image: $image_name"
   
   # Check if user is in docker group
@@ -1929,7 +1933,7 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: acekorneya/asa_server:${image_tag}
+    image: ${POK_IMAGE_REPO}:${image_tag}
     container_name: asa_${instance_name} 
     restart: unless-stopped
     stop_grace_period: ${stop_grace_seconds}s
@@ -4110,7 +4114,7 @@ _start_instance_validate_image_permissions() {
   file_uid=$(echo "$file_ownership" | cut -d: -f1)
   file_gid=$(echo "$file_ownership" | cut -d: -f2)
 
-  if [[ "$image_tag" == *"_beta" || "$image_tag" == "2_1_latest" ]]; then
+  if [[ "$image_tag" == *"_${POK_BETA_NAME}" || "$image_tag" == "2_1_latest" ]]; then
     local container_uid=7777
     local container_gid=7777
 
@@ -4255,7 +4259,7 @@ _start_instance_launch_container() {
   use_sudo=$(get_docker_sudo_preference)
   if [ "$use_sudo" = "true" ]; then
     echo "Using 'sudo' for Docker commands..."
-    sudo docker pull acekorneya/asa_server:${image_tag} || {
+    sudo docker pull ${POK_IMAGE_REPO}:${image_tag} || {
       echo "❌ ERROR: Failed to pull the Docker image. Check your internet connection and Docker configuration."
       exit 1
     }
@@ -4267,16 +4271,16 @@ _start_instance_launch_container() {
       exit 1
     }
   else
-    docker pull acekorneya/asa_server:${image_tag} || {
+    docker pull ${POK_IMAGE_REPO}:${image_tag} || {
       local pull_exit_code=$?
-      if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:${image_tag} 2>&1) =~ "permission denied" ]]; then
+      if [ $pull_exit_code -eq 1 ] && [[ $(docker pull ${POK_IMAGE_REPO}:${image_tag} 2>&1) =~ "permission denied" ]]; then
         echo "Permission denied error occurred while pulling the Docker image."
         echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
         echo "Falling back to using 'sudo' for Docker commands."
         echo "To grant your user permission to run Docker commands, run:"
         echo "   sudo usermod -aG docker $(id -un)"
         echo "Then log out and back in for changes to take effect."
-        sudo docker pull acekorneya/asa_server:${image_tag} || {
+        sudo docker pull ${POK_IMAGE_REPO}:${image_tag} || {
           echo "❌ ERROR: Failed to pull the Docker image even with sudo. Check your internet connection and Docker configuration."
           exit 1
         }
@@ -5685,7 +5689,7 @@ check_for_POK_updates() {
   # Determine which branch to use for updates
   local branch_name="master"
   if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-    branch_name="beta"
+    branch_name="$POK_BETA_NAME"
     if [ -t 0 ]; then # Only show this message in interactive mode
       echo "Using beta branch for updates"
     fi
@@ -5694,7 +5698,7 @@ check_for_POK_updates() {
   # Add timestamp and random string as cache-busting parameters
   local timestamp=$(date +%s)
   local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?nocache=${timestamp}_${random_str}"
+  local script_url="https://raw.githubusercontent.com/${POK_GITHUB_REPO}/${branch_name}/POK-manager.sh?nocache=${timestamp}_${random_str}"
   local temp_file="/tmp/POK-manager.sh.${timestamp}.tmp"
   local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
   
@@ -6080,7 +6084,7 @@ get_current_build_id() {
     temp_container_id=$(run_docker_with_saved_preference run -d --rm \
       -e UPDATE_MODE=TRUE \
       --name "$temp_container_name" \
-      "acekorneya/asa_server:${image_tag}" \
+      "${POK_IMAGE_REPO}:${image_tag}" \
       sleep infinity) || return 1
     
     if [ -z "$temp_container_id" ]; then
@@ -6095,7 +6099,7 @@ get_current_build_id() {
   
   local steamcmd_output
   steamcmd_output=$(run_docker_with_saved_preference exec "$existing_container" \
-    /opt/steamcmd/steamcmd.sh +login anonymous +app_info_print "$app_id" +quit 2>/dev/null) || {
+    /usr/local/bin/steamcmd +login anonymous +app_info_print "$app_id" +quit 2>/dev/null) || {
     if [ "$cleanup_container" = true ]; then
       run_docker_with_saved_preference rm -f "$existing_container" > /dev/null 2>&1 || true
     fi
@@ -7299,7 +7303,7 @@ display_version() {
   echo "POK-manager.sh version ${POK_MANAGER_VERSION} (${POK_MANAGER_BRANCH})"
   echo "Default PUID: ${PUID}, PGID: ${PGID}"
   local image_tag=$(get_docker_image_tag)
-  echo "Docker image: acekorneya/asa_server:${image_tag}"
+  echo "Docker image: ${POK_IMAGE_REPO}:${image_tag}"
   
   # Fetch and display patch notes for the current version
   local changelog=$(fetch_changelog)
@@ -7329,13 +7333,13 @@ display_version() {
 fetch_changelog() {
   local branch_name="master"
   if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-    branch_name="beta"
+    branch_name="$POK_BETA_NAME"
   fi
   
   # Add timestamp and random string as cache-busting parameters
   local timestamp=$(date +%s)
   local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-  local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/changelog.txt?nocache=${timestamp}_${random_str}"
+  local changelog_url="https://raw.githubusercontent.com/${POK_GITHUB_REPO}/${branch_name}/changelog.txt?nocache=${timestamp}_${random_str}"
   local temp_file="/tmp/changelog.${timestamp}.tmp"
   
   # Download the changelog using wget or curl with aggressive cache-busting
@@ -7530,7 +7534,7 @@ set_beta_mode() {
     echo "Setting POK-manager to beta mode"
     echo "beta" > "${config_dir}/beta_mode"
     POK_MANAGER_BRANCH="beta"
-    new_tag="2_1_beta"
+    new_tag="2_1_${POK_BETA_NAME}"
   else
     echo "Setting POK-manager to stable mode"
     rm -f "${config_dir}/beta_mode"
@@ -7607,7 +7611,7 @@ set_beta_mode() {
   local legacy_pgid=1000
   
   if [ "$mode" = "beta" ]; then
-    echo "Using PUID:PGID=7777:7777 for beta mode (2_1_beta image)"
+    echo "Using PUID:PGID=7777:7777 for beta mode (2_1_${POK_BETA_NAME} image)"
   else
     # For stable mode, check which image tag version we're using
     local image_version="2_0"
@@ -7704,14 +7708,14 @@ upgrade_pok_manager() {
     # Determine which branch to use for updates
     local branch_name="master"
     if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-      branch_name="beta"
+      branch_name="$POK_BETA_NAME"
       echo "Using beta branch for updates"
     fi
     
     # Add timestamp and random string as cache-busting parameters
     local timestamp=$(date +%s)
     local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-    local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?nocache=${timestamp}_${random_str}"
+    local script_url="https://raw.githubusercontent.com/${POK_GITHUB_REPO}/${branch_name}/POK-manager.sh?nocache=${timestamp}_${random_str}"
     temp_file="/tmp/POK-manager.sh.${timestamp}.tmp"
     
     # Download the new script
@@ -8011,7 +8015,7 @@ update_server_files_and_docker() {
 
   # Pull the latest Docker image to ensure we have the latest version
   local image_tag=$(get_docker_image_tag "")
-  local image_name="acekorneya/asa_server:${image_tag}"
+  local image_name="${POK_IMAGE_REPO}:${image_tag}"
   echo "Using Docker image tag: ${image_tag}"
   echo "Pulling Docker image: $image_name"
   if ! run_docker_with_saved_preference pull "$image_name"; then
@@ -9141,7 +9145,7 @@ get_docker_image_tag() {
   local is_beta=false
   
   if check_beta_mode; then
-    branch_suffix="beta"
+    branch_suffix="$POK_BETA_NAME"
     is_beta=true
   fi
   
@@ -9953,13 +9957,13 @@ display_changelog() {
   # Check if we're in beta mode
   local branch="master"
   if check_beta_mode; then
-    branch="beta"
+    branch="$POK_BETA_NAME"
   fi
   
   # Generate a unique timestamp and random string to prevent caching
   local timestamp=$(date +%s)
   local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-  local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/changelog.txt?nocache=${timestamp}_${random_str}"
+  local changelog_url="https://raw.githubusercontent.com/${POK_GITHUB_REPO}/$branch/changelog.txt?nocache=${timestamp}_${random_str}"
   
   # Always attempt to download the latest changelog
   local download_success=false
@@ -9980,7 +9984,7 @@ display_changelog() {
       echo "Using cached changelog (may be outdated)..."
     else
       echo "No cached changelog available."
-      echo "You can manually view the changelog at: https://github.com/Acekorneya/Ark-Survival-Ascended-Server/blob/$branch/changelog.txt"
+      echo "You can manually view the changelog at: https://github.com/${POK_GITHUB_REPO}/blob/$branch/changelog.txt"
       return 1
     fi
   else

@@ -322,6 +322,22 @@ initialize_proton_prefix() {
     return 1
   fi
 
+  # The image build can't run FEX, so the VC++ redistributable shipped in the
+  # image is installed here through the same pinned Proton.
+  local vcredist="${POK_VCREDIST_EXE:-/home/pok/vcredist/vc_redist.x64.exe}"
+  local system32="$WINEPREFIX/drive_c/windows/system32"
+  if [ -f "$vcredist" ]; then
+    echo "Installing the Visual C++ runtime into the Proton prefix..."
+    "$POK_PROTON_EXECUTABLE" runinprefix "$vcredist" /quiet /norestart || \
+      echo "WARNING: VC++ installer returned nonzero; verifying installed DLLs." >&2
+    if [ ! -f "$system32/vcruntime140.dll" ] || [ ! -f "$system32/msvcp140.dll" ]; then
+      echo "ERROR: Visual C++ runtime DLLs are missing from the Proton prefix." >&2
+      return 1
+    fi
+  else
+    echo "WARNING: $vcredist not found; skipping the Visual C++ runtime install." >&2
+  fi
+
   printf '%s\n' "$POK_PROTON_VERSION" > "$marker"
   echo "Proton prefix initialization completed."
 }

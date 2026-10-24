@@ -26,15 +26,14 @@ ENV PUID=${PUID}
 ENV PGID=${PGID}
 ENV PROTON_USE_ESYNC=1 
 ENV DEBIAN_FRONTEND=noninteractive
-# Set specific Wine version to ensure consistency
-ENV WINEDLLOVERRIDES="version=n,b;vcrun2022=n,b"
+ENV WINEDLLOVERRIDES="version=n,b"
 ENV WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx"
 ENV DISPLAY=:0.0
 ENV HEALTHCHECK_PORT=8080
 
 USER root
 
-# Install necessary packages and setup for WineHQ repository
+# Install the Linux dependencies required by SteamCMD and the pinned GE-Proton.
 RUN set -ex; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -50,15 +49,12 @@ RUN set -ex; \
     # Add X server packages for headless operation
     # instead of libgl1-mesa-glx install libgl1 libglx-mesa0
     xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1 libglx-mesa0 \
-    # Add necessary libraries for Wine and VC++
+    # Add necessary libraries for Proton and VC++
     libldap2 libgnutls30t64 \
     libxml2-16 libasound2t64 libpulse0 \
     libopenal1 libncurses6 \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
-    # cabextract is essential for winetricks vcrun2019 installation
-    cabextract winbind \
-    # Install latest stable Wine
-    wine; \
+    winbind; \
     sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
     locale-gen en_US.UTF-8; \
     update-locale LANG=en_US.UTF-8; \
@@ -73,11 +69,6 @@ ENV LC_ALL=en_US.UTF-8
 # Copy steamcmd executable to /opt
 RUN mkdir -p /opt/steamcmd
 RUN cp -r /home/steam/Steam/* /opt/steamcmd/
-
-# Setup winetricks for Visual C++ Redistributable installation
-RUN set -ex; \
-    wget https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -O /usr/local/bin/winetricks && \
-    chmod +x /usr/local/bin/winetricks
 
 # Create the pok group and user, assign home directory, and add to the 'users' group  
 RUN set -ex; \
@@ -94,9 +85,15 @@ RUN set -ex; \
 WORKDIR /usr/local/bin
 RUN set -ex; \
     if [ "$PROTON_VERSION" = "latest" ]; then \
-    DOWNLOAD_URL=$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep browser_download_url | grep '.tar.gz"' | cut -d\" -f4 | head -n 1); \
+    DOWNLOAD_URL=$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep browser_download_url | grep 'x86_64.tar.gz"' | cut -d\" -f4 | head -n 1); \
     else \
-    DOWNLOAD_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_VERSION}/${PROTON_VERSION}.tar.gz"; \
+    BASE_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_VERSION}"; \
+    # GE-Proton 11-2+ ships per-arch assets; the x86_64 build runs under FEX. Older releases have no suffix. \
+    if curl -fsIL "${BASE_URL}/${PROTON_VERSION}-x86_64.tar.gz" >/dev/null; then \
+    DOWNLOAD_URL="${BASE_URL}/${PROTON_VERSION}-x86_64.tar.gz"; \
+    else \
+    DOWNLOAD_URL="${BASE_URL}/${PROTON_VERSION}.tar.gz"; \
+    fi; \
     fi; \
     ARCHIVE_NAME="${DOWNLOAD_URL##*/}"; \
     CHECKSUM_URL="${DOWNLOAD_URL%.tar.gz}.sha512sum"; \
@@ -134,47 +131,6 @@ RUN set -ex; \
 ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-arm64 /tini
 RUN chmod +x /tini
 
-# Setup and pre-initialize Wine environment for AsaApi
-RUN set -ex; \
-    # Create a complete Wine prefix structure
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/windows/system32; \
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files/Common\ Files; \
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Common\ Files; \
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/users/steamuser/Temp; \
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices; \
-    # Create proper symlinks for dosdevices
-    ln -sf "../drive_c" /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices/c:; \
-    ln -sf "/dev/null" /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices/d::; \
-    ln -sf "/dev/null" /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices/e::; \
-    ln -sf "/dev/null" /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices/f::; \
-    # Create comprehensive Visual C++ structure for AsaApi (aligned with VS 2022 redistributables)
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT; \
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT; \
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/windows/system32/vcruntime; \
-    # Create VC++ dummy files so ASA API loaders detect the redistributable during first boot
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/msvcp140.dll; \
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/vcruntime140.dll; \
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/msvcp140.dll; \
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/vcruntime140.dll; \
-    # Create wine registry files with proper configuration
-    echo "WINE REGISTRY Version 2" > /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/system.reg; \
-    echo ";; All keys relative to \\\\Machine" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/system.reg; \
-    echo "#arch=win64" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/system.reg; \
-    echo "" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/system.reg; \
-    echo "WINE REGISTRY Version 2" > /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg; \
-    echo ";; All keys relative to \\\\User\\\\S-1-5-21-0-0-0-1000" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg; \
-    echo "#arch=win64" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg; \
-    echo "[Software\\\\Wine\\\\DllOverrides]" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg; \
-    echo "\"*version\"=\"native,builtin\"" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg; \
-    echo "\"vcrun2019\"=\"native,builtin\"" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg; \
-    echo "" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg; \
-    echo "WINE REGISTRY Version 2" > /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/userdef.reg; \
-    echo ";; All keys relative to \\\\User\\\\DefUser" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/userdef.reg; \
-    echo "#arch=win64" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/userdef.reg; \
-    echo "" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/userdef.reg; \
-    # Create tracked_files to mark prefix as initialized
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/tracked_files
-
 # Set proper permissions for everything
 RUN set -ex; \
     # Set proper permissions for user pok
@@ -187,35 +143,18 @@ RUN set -ex; \
     # Make logs directory world-writable to avoid permission issues
     chmod -R 775 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs; \
     chmod -R 775 /home/pok/arkserver/ShooterGame/Saved/Logs; \
-    # Ensure Wine prefix has correct permissions
-    chown -R pok:pok /home/pok/.steam/steam/steamapps/compatdata/2430930; \
-    chmod -R 755 /home/pok/.steam/steam/steamapps/compatdata/2430930; \
     # Make AsaApi directories executable
     mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/AsaApi; \
     chmod -R 755 /home/pok/arkserver/ShooterGame/Binaries/Win64/AsaApi; \
-    chmod -R +x /home/pok/arkserver/ShooterGame/Binaries/Win64; \
-    # Ensure winetricks can run for user pok
-    chmod +x /usr/local/bin/winetricks
+    chmod -R +x /home/pok/arkserver/ShooterGame/Binaries/Win64
 
-# Download and pre-install VC++ Redistributable
-USER pok
+# Ship the official VC++ redistributable. FEX can't run during the image build,
+# so initialize_proton_prefix installs it through the pinned Proton on first start.
 RUN set -ex; \
-    mkdir -p /tmp/vcredist; \
-    cd /tmp/vcredist; \
-    wget -q https://aka.ms/vs/17/release/vc_redist.x64.exe; \
-    wget -q https://aka.ms/vs/17/release/vc_redist.x86.exe; \
-    # Prefer vcrun2022 for latest VC++ runtime; fall back to vcrun2019 if winetricks lacks the verb
-    WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx" \
-    WINEDLLOVERRIDES="mscoree,mshtml=" \
-    winetricks -q vcrun2022 || winetricks -q vcrun2019 || true; \
-    # Install the official redistributables quietly for both architectures
-    WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx" \
-    WINEDLLOVERRIDES="mscoree,mshtml=" \
-    wine64 /tmp/vcredist/vc_redist.x64.exe /quiet /norestart || true; \
-    WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx" \
-    WINEDLLOVERRIDES="mscoree,mshtml=" \
-    wine /tmp/vcredist/vc_redist.x86.exe /quiet /norestart || true; \
-    rm -rf /tmp/vcredist
+    mkdir -p /home/pok/vcredist; \
+    wget -q https://aka.ms/vs/17/release/vc_redist.x64.exe -O /home/pok/vcredist/vc_redist.x64.exe; \
+    test -s /home/pok/vcredist/vc_redist.x64.exe; \
+    chown -R pok:pok /home/pok/vcredist
 
 USER root
 # Install Node.js 24 LTS for EOS token helpers
@@ -229,7 +168,8 @@ COPY --chown=pok:pok defaults/ /home/pok/defaults/
 COPY --chown=pok:pok require_files/ /home/pok/require_files/
 COPY --from=winprobe-builder --chown=pok:pok /tmp/pok_https_probe.exe /home/pok/require_files/pok_https_probe.exe
 RUN find /home/pok/scripts -maxdepth 1 -type f \( -name "*.sh" -o -name "*.py" \) -exec chmod +x {} +
-RUN cd /home/pok/scripts/helpers && npm install --production
+# Call npm via node directly: the "#!/usr/bin/env node" shebang fails under QEMU with the multi-call env in Ubuntu 26.04
+RUN cd /home/pok/scripts/helpers && node "$(readlink -f "$(command -v npm)")" install --production
 RUN find /home/pok/scripts/helpers -type f \( -name "*.py" -o -name "*.js" \) -exec chmod +x {} +
 
 # Create essential runtime directories with proper permissions

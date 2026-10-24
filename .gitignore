@@ -29,6 +29,7 @@
 !/.github/**
 !/changelog.txt
 !/dockerfile
+!/build.sh
 !/docker-compose.yaml
 !/LICENSE.txt
 !/POK-manager.sh

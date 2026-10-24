@@ -135,7 +135,8 @@ RUN set -ex; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
     jq curl wget tar unzip nano gzip iproute2 procps dbus tini \
-    python3-minimal \
+    # Full python3: the Proton script needs ctypes, uuid, shlex and other modules python3-minimal lacks \
+    python3 \
     # tzdata package provides timezone database for TZ environment variable support \
     tzdata locales \
     libc6 libgcc-s1 libstdc++6 libglib2.0-0t64 libvulkan1 \

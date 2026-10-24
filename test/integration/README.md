@@ -28,10 +28,13 @@ Use `--branch stable` to validate the stable/latest mode, or leave the branch as
 bash test/run_full_local_validation.sh test_beta --branch beta --leave-running
 bash test/run_full_local_validation.sh test_beta --branch stable --skip-fast
 bash test/run_full_local_validation.sh test_beta --branch beta --sudo
+bash test/run_full_local_validation.sh test_beta --branch beta --runtime-matrix
 ```
 
 This script is intentionally local-only. Use a dedicated test instance, not a live production server, because it performs a clean stop/start cycle.
 Use `--sudo` on WSL or other setups where the manager needs elevated privileges to manipulate ownership or run the target validation path. Leave it off when validating a proper non-root `pokuser` / matching-PUID installation.
+
+`--runtime-matrix` additionally validates `-logs`, `-saveworld`, `-chat`, custom RCON, zero-minute verified restart and shutdown, and startup in both API modes. It always stops the instance, restores its original API setting, and cannot be combined with `--leave-running`. Credential-dependent EOS status and historical depot rollback are intentionally excluded; test rollback on a beta installation that has an eligible known-good deployment and an ASA-owning Steam account.
 
 ## Pre-flight Checklist
 

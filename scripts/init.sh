@@ -8,6 +8,34 @@ POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 source "${POK_SCRIPTS_DIR}/common.sh"
 # shellcheck source=/dev/null
 source "${POK_SCRIPTS_DIR}/update_coordination.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
+
+INIT_SHUTDOWN_IN_PROGRESS=false
+
+container_signal_shutdown() {
+  if [ "$INIT_SHUTDOWN_IN_PROGRESS" = "true" ]; then
+    return 0
+  fi
+
+  INIT_SHUTDOWN_IN_PROGRESS=true
+  trap '' SIGTERM SIGINT
+  echo "[INFO] Container stop signal received; starting verified two-stage ASA shutdown..."
+
+  if safe_container_stop; then
+    echo "[SUCCESS] Both world saves are verified. Exiting container cleanly."
+    exit 0
+  fi
+
+  echo "[FATAL] Container stop remains unsafe because save verification failed." >&2
+  echo "[FATAL] PID 1 will remain alive until Docker's configured grace period expires." >&2
+  INIT_SHUTDOWN_IN_PROGRESS=false
+  trap container_signal_shutdown SIGTERM SIGINT
+  return 1
+}
+
+trap container_signal_shutdown SIGTERM SIGINT
+rm -f "$VERIFIED_SHUTDOWN_MARKER" /home/pok/shutdown_complete.flag /home/pok/shutdown.flag /home/pok/stop_monitor.flag /home/pok/restart_reason.flag /home/pok/*.pid /home/pok/expected_build_id.txt /tmp/restart_in_progress /tmp/enhanced_shutdown_display 2>/dev/null || true
 
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   return 0
@@ -158,7 +186,7 @@ if [ -f "/home/pok/restart_reason.flag" ] && [ "$(cat /home/pok/restart_reason.f
   if [ "${API}" = "TRUE" ]; then
     echo "🖥️ API mode container recovery - setting up fresh environment..."
     # Force a complete environment reset
-    export XDG_RUNTIME_DIR=/run/user/$(id -u)
+    export XDG_RUNTIME_DIR=/tmp/pok-runtime-$(id -u)
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
     export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
     export WINEDLLOVERRIDES="version=n,b"
@@ -201,7 +229,7 @@ if [ "$1" = "--from-restart" ] || [ -f "/tmp/restart_in_progress" ]; then
   # Force reset environment variables that are critical for API mode
   if [ "${API}" = "TRUE" ]; then
     echo "🖥️ Forcing Xvfb setup for API restart mode..."
-    export XDG_RUNTIME_DIR=/run/user/$(id -u)
+    export XDG_RUNTIME_DIR=/tmp/pok-runtime-$(id -u)
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
     export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
     export WINEDLLOVERRIDES="version=n,b"
@@ -447,125 +475,27 @@ setup_virtual_display() {
   fi
   
   # Export essential display environment variables
-  export WINEDLLOVERRIDES="*version=n,b;vcrun2022=n,b"
-  export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+  export WINEDLLOVERRIDES="version=n,b"
 }
 
 # Robust AsaApi initialization for container environment
 verify_proton_environment() {
-  echo "----Robust Proton Environment Verification for AsaApi----"
-  
-  # Ensure we have the correct directory structure
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser"
-  
-  # Step 1: Check and find available Proton versions
-  echo "Searching for available Proton GE versions..."
-  PROTON_BASE_DIR="/home/pok/.steam/steam/compatibilitytools.d"
-  mkdir -p "$PROTON_BASE_DIR"
-  
-  # Create an array to store found Proton directories
-  FOUND_PROTON_DIRS=()
-  
-  # First search in the standard location
-  if [ -d "$PROTON_BASE_DIR" ]; then
-    while IFS= read -r dir; do
-      if [ -d "$dir" ] && [ -f "$dir/proton" ]; then
-        FOUND_PROTON_DIRS+=("$dir")
-        echo "Found Proton at: $dir"
-      fi
-    done < <(find "$PROTON_BASE_DIR" -maxdepth 1 -name "GE-Proton*" -type d)
+  echo "----Pinned Proton Environment Verification----"
+
+  if ! resolve_pinned_proton; then
+    echo "ERROR: The image-pinned Proton installation failed verification." >&2
+    return 1
   fi
-  
-  # Then check in /usr/local/bin
-  if [ -f "/usr/local/bin/proton" ]; then
-    FOUND_PROTON_DIRS+=("/usr/local/bin")
-    echo "Found Proton at: /usr/local/bin"
-  fi
-  
-  # Step 2: If no Proton directories found, check if the tarball is available
-  if [ ${#FOUND_PROTON_DIRS[@]} -eq 0 ]; then
-    echo "No Proton installations found in standard locations."
-    
-    # Try to find the tarball
-    PROTON_TARBALL=$(find /tmp -name "GE-Proton*.tar.gz" -type f 2>/dev/null | head -n 1)
-    
-    if [ -n "$PROTON_TARBALL" ]; then
-      echo "Found Proton tarball: $PROTON_TARBALL. Extracting..."
-      mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current"
-      tar -xzf "$PROTON_TARBALL" -C "$PROTON_BASE_DIR"
-      EXTRACTED_DIR=$(find "$PROTON_BASE_DIR" -maxdepth 1 -name "GE-Proton*" -type d | head -n 1)
-      
-      if [ -n "$EXTRACTED_DIR" ]; then
-        echo "Extracted Proton to: $EXTRACTED_DIR"
-        FOUND_PROTON_DIRS+=("$EXTRACTED_DIR")
-      fi
-    else
-      echo "WARNING: No Proton tarball found. Will try to use the system Proton."
-    fi
-  fi
-  
-  # Step 3: Create symlinks for expected Proton versions
-  if [ ${#FOUND_PROTON_DIRS[@]} -gt 0 ]; then
-    # Use the first found Proton directory as the source for symlinks
-    PROTON_SOURCE="${FOUND_PROTON_DIRS[0]}"
-    echo "Using $PROTON_SOURCE as the primary Proton installation"
-    
-    # Create symlinks for various expected version names
-    ln -sf "$PROTON_SOURCE" "$PROTON_BASE_DIR/GE-Proton-Current"
-    ln -sf "$PROTON_SOURCE" "$PROTON_BASE_DIR/GE-Proton8-21"
-    ln -sf "$PROTON_SOURCE" "$PROTON_BASE_DIR/GE-Proton9-25"
-    
-    echo "Created symlinks for compatibility with scripts"
-  else
-    echo "WARNING: No Proton installations found. Container may not function correctly."
-    
-    # Try to create a minimal proton script as a last resort
-    if [ ! -d "$PROTON_BASE_DIR/GE-Proton-Current" ]; then
-      echo "Creating minimal Proton directory structure as fallback..."
-      mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current"
-      mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current/dist/bin"
-      
-      # Create a minimal proton script
-      echo '#!/bin/bash' > "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      echo 'export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"' >> "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      echo 'wine "$@"' >> "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      chmod +x "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      
-      # Create symlinks
-      ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton8-21"
-      ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton9-25"
-      
-      echo "Created minimal Proton fallback"
-    fi
-  fi
-  
-  # Step 4: Force reset the Proton prefix to ensure clean environment
-  echo "Force resetting Proton prefix for clean environment..."
-  initialize_proton_prefix
-  
-  # Step 5: Set up directory permissions
+  echo "Using image-pinned Proton: $POK_PROTON_VERSION"
+  echo "Proton executable: $POK_PROTON_EXECUTABLE"
+
+  echo "Ensuring the pinned Proton prefix is initialized..."
+  initialize_proton_prefix || return 1
+
   echo "Setting correct permissions for top-level directories..."
   chmod 755 "${STEAM_COMPAT_DATA_PATH}"
-  chmod 755 "$PROTON_BASE_DIR"
-  
-  # Ensure synchronization
-  sync
-  # Add a delay to ensure all filesystem operations complete
-  sleep 3
-  
-  # Step 6: Test Wine functionality
-  echo "Testing Wine functionality..."
-  if WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine --version >/dev/null 2>&1; then
-    echo "Wine is functional in the environment."
-  else
-    echo "WARNING: Wine does not appear to be functioning correctly."
-    # Try to set up Wine library paths
-    export LD_LIBRARY_PATH="/usr/lib/wine:/usr/lib32/wine:$LD_LIBRARY_PATH"
-  fi
-  
+  chmod 755 "$(dirname "$POK_PROTON_DIR")"
+
   echo "Proton environment verification completed."
 }
 
@@ -602,7 +532,7 @@ fi
 
 # Set essential Proton/Wine environment variables regardless of API setting
 # These need to be set for both API=TRUE and API=FALSE cases
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export XDG_RUNTIME_DIR=/tmp/pok-runtime-$(id -u)
 export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
 export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
 export WINEDLLOVERRIDES="version=n,b"
@@ -622,15 +552,19 @@ if [ -f "/home/pok/require_files/xaudio2_9redist.dll" ]; then
 fi
 
 # Initialize Proton environment regardless of API setting
-verify_proton_environment
+if ! verify_proton_environment; then
+  echo "❌ ERROR: Pinned Proton environment verification failed." >&2
+  exit 1
+fi
 
 # Install/Update AsaApi if API=TRUE
 if [ "${API}" = "TRUE" ]; then
   echo ""
   echo "🔌 Initializing AsaApi plugin system..."
   
-  # Install the API with extra verification for container mode
-  install_ark_server_api
+  # Install the selected API source and prepare its cache before any Wine
+  # invocation, including the loader preflight below.
+  ensure_ark_server_api_ready
   
   # Verify the installation
   if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then
@@ -639,12 +573,6 @@ if [ "${API}" = "TRUE" ]; then
     mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
     chmod -R 755 "${ASA_DIR}/ShooterGame/Binaries/Win64"
     
-    # Pre-test AsaApiLoader.exe with Wine to ensure it can be found and executed
-    if WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" --help >/dev/null 2>&1; then
-      echo "  ✅ AsaApiLoader.exe is executable"
-    else
-      echo "  ℹ️ AsaApiLoader.exe test execution returned expected result"
-    fi
   else
     echo "  ⚠️ AsaApi loader not found after installation attempt"
   fi
@@ -684,11 +612,12 @@ else
   nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
   SERVER_PID=$!
   echo "[INFO] ARK server launched with PID: $SERVER_PID"
-  echo "[INFO] View logs with: tail -f /home/pok/logs/server_console.log"
+  echo "[INFO] View logs with: tail -n +1 -F /home/pok/logs/server_console.log"
   
-  # Start a background process to tail the log file to console
-  # This will show logs in the container's output while allowing the server to run in background
-  (tail -f /home/pok/logs/server_console.log 2>/dev/null &)
+  # Mirror the complete launcher/server stream into container stdout and keep
+  # following it if the console log is replaced.
+  tail -n +1 -F /home/pok/logs/server_console.log 2>/dev/null &
+  CONSOLE_TAIL_PID=$!
 fi
 
 # Simple server startup notification without creating competing flags
@@ -805,8 +734,8 @@ MONITOR_PID=$!
 } &
 RESTART_MONITOR_PID=$!
 
-# Launch the update monitor in background if API mode is not enabled
-if env_value_is_truthy "${UPDATE_SERVER:-FALSE}" && [ "${API}" != "TRUE" ]; then
+# Launch the update monitor in background if UPDATE_SERVER is enabled
+if env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; then
   echo "[INFO] Starting update monitor in background..."
   # Remove residual stop flag from previous container run before launching monitor
   rm -f /home/pok/stop_monitor.flag 2>/dev/null || true
@@ -821,13 +750,18 @@ if env_value_is_truthy "${UPDATE_SERVER:-FALSE}" && [ "${API}" != "TRUE" ]; then
   
   MONITOR_PID=$!
   echo "[INFO] Update monitor started with PID: $MONITOR_PID"
-elif [ "${API}" = "TRUE" ] && env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; then
-  echo "⚠️ [WARNING] Update monitor is disabled when API=TRUE"
-  echo "⚠️ [WARNING] You must manually update the server using the POK-manager.sh script with:"
-  echo "⚠️           ./POK-manager.sh -stop <instance_name>"
-  echo "⚠️           ./POK-manager.sh -start <instance_name>"
 fi
 
-# Keep the init.sh script running to prevent container from exiting
-# This will not block log display since logs are handled separately
-tail -f /dev/null
+if ! shared_update_policy_allows_automatic_updates; then
+  echo "[INFO] Starting read-only update notifier; it cannot restart servers or modify shared files."
+  nohup /home/pok/scripts/update_notice_monitor.sh > >(tee -a /home/pok/logs/update_notice.log) 2>&1 &
+  UPDATE_NOTICE_MONITOR_PID=$!
+  echo "[INFO] Read-only update notifier started with PID: $UPDATE_NOTICE_MONITOR_PID"
+fi
+
+# Keep PID 1 interruptible so SIGTERM runs the verified shutdown handler. A
+# foreground `tail -f /dev/null` can prevent Bash from processing the trap.
+while true; do
+  sleep 86400 &
+  wait $! || true
+done

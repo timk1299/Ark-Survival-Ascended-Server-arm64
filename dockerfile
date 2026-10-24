@@ -1,3 +1,12 @@
+FROM ubuntu:24.04 AS winprobe-builder
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 && \
+    rm -rf /var/lib/apt/lists/*
+COPY require_files/pok_https_probe.c /tmp/pok_https_probe.c
+RUN x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -municode \
+    /tmp/pok_https_probe.c -o /tmp/pok_https_probe.exe -lwinhttp
+
 FROM timk1299/steamcmd:arm64
 # IMPORTANT: These values are set at build time and CANNOT be changed at runtime
 # The container has fixed user IDs:
@@ -31,7 +40,7 @@ RUN set -ex; \
     apt-get install -y --no-install-recommends \
     jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
     python3-minimal \
-    tzdata \
+    tzdata locales \
     # tzdata package provides timezone database for TZ environment variable support \
     libc6 libgcc-s1 libglib2.0-0t64 libvulkan1 \
     libnss3 \
@@ -50,9 +59,16 @@ RUN set -ex; \
     cabextract winbind \
     # Install latest stable Wine
     wine; \
+    sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen en_US.UTF-8; \
+    update-locale LANG=en_US.UTF-8; \
     # Cleanup to keep the image lean
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
 
 # Copy steamcmd executable to /opt
 RUN mkdir -p /opt/steamcmd
@@ -82,16 +98,20 @@ RUN set -ex; \
     else \
     DOWNLOAD_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_VERSION}/${PROTON_VERSION}.tar.gz"; \
     fi; \
-    curl -sL "$DOWNLOAD_URL" -o /tmp/proton.tar.gz; \
+    ARCHIVE_NAME="${DOWNLOAD_URL##*/}"; \
+    CHECKSUM_URL="${DOWNLOAD_URL%.tar.gz}.sha512sum"; \
+    CHECKSUM_NAME="${CHECKSUM_URL##*/}"; \
+    curl -fsSL "$DOWNLOAD_URL" -o "/tmp/$ARCHIVE_NAME"; \
+    curl -fsSL "$CHECKSUM_URL" -o "/tmp/$CHECKSUM_NAME"; \
+    (cd /tmp && sha512sum -c "$CHECKSUM_NAME"); \
     mkdir -p /tmp/proton-extract; \
     mkdir -p /home/pok/.steam/steam/compatibilitytools.d; \
-    tar -xzf /tmp/proton.tar.gz -C /tmp/proton-extract; \
+    tar -xzf "/tmp/$ARCHIVE_NAME" -C /tmp/proton-extract; \
     ACTUAL_VERSION=$(basename "$(find /tmp/proton-extract -maxdepth 1 -mindepth 1 -type d | head -n 1)"); \
     mv /tmp/proton-extract/* /home/pok/.steam/steam/compatibilitytools.d/; \
     ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current; \
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21; \
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25; \
-    rm -rf /tmp/proton-extract /tmp/proton.tar.gz
+    printf '%s\n' "$ACTUAL_VERSION" > /home/pok/.steam/steam/compatibilitytools.d/.pok-proton-version; \
+    rm -rf /tmp/proton-extract "/tmp/$ARCHIVE_NAME" "/tmp/$CHECKSUM_NAME"
 
 # Setup machine-id for Proton
 RUN set -ex; \
@@ -207,6 +227,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
 COPY --chown=pok:pok scripts/ /home/pok/scripts/
 COPY --chown=pok:pok defaults/ /home/pok/defaults/
 COPY --chown=pok:pok require_files/ /home/pok/require_files/
+COPY --from=winprobe-builder --chown=pok:pok /tmp/pok_https_probe.exe /home/pok/require_files/pok_https_probe.exe
 RUN find /home/pok/scripts -maxdepth 1 -type f \( -name "*.sh" -o -name "*.py" \) -exec chmod +x {} +
 RUN cd /home/pok/scripts/helpers && npm install --production
 RUN find /home/pok/scripts/helpers -type f \( -name "*.py" -o -name "*.js" \) -exec chmod +x {} +

@@ -36,7 +36,7 @@ load '../test_helper/project.bash'
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
     source "$REPO_ROOT/test/run_full_local_validation.sh"
-    full_validation_parse_args test_beta --branch beta --startup-timeout 600 --process-timeout 900 --health-timeout 120 --skip-fast --skip-smoke --leave-running --sudo
+    full_validation_parse_args test_beta --branch beta --startup-timeout 600 --process-timeout 900 --health-timeout 120 --skip-fast --skip-smoke --runtime-matrix --sudo
     printf "instance=%s\n" "$INSTANCE_NAME"
     printf "branch=%s\n" "$TARGET_BRANCH_MODE"
     printf "startup=%s\n" "$STARTUP_TIMEOUT"
@@ -44,7 +44,7 @@ load '../test_helper/project.bash'
     printf "health=%s\n" "$HEALTH_TIMEOUT"
     printf "skip_fast=%s\n" "$SKIP_FAST"
     printf "skip_smoke=%s\n" "$SKIP_SMOKE"
-    printf "leave_running=%s\n" "$LEAVE_RUNNING"
+    printf "runtime_matrix=%s\n" "$RUNTIME_MATRIX"
     printf "use_sudo=%s\n" "$USE_SUDO"
   '
 
@@ -56,8 +56,95 @@ load '../test_helper/project.bash'
   assert_output --partial "health=120"
   assert_output --partial "skip_fast=true"
   assert_output --partial "skip_smoke=true"
-  assert_output --partial "leave_running=true"
+  assert_output --partial "runtime_matrix=true"
   assert_output --partial "use_sudo=true"
+}
+
+@test "full_validation_parse_args rejects leaving the runtime matrix running" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/test/run_full_local_validation.sh"
+    set +e
+    full_validation_parse_args test_beta --runtime-matrix --leave-running
+    status=$?
+    set -e
+    echo "status=$status"
+  '
+
+  assert_success
+  assert_output --partial "--runtime-matrix cannot be combined with --leave-running"
+  assert_output --partial "status=1"
+}
+
+@test "full validation diagnostics redact server and API credentials" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/test/run_full_local_validation.sh"
+    printf "%s\n" \
+      "SERVER_ADMIN_PASSWORD=admin-secret" \
+      "?ServerPassword=join-secret?RCONEnabled=True" \
+      "AccountKey: premium-secret" \
+      "access_token=token-secret" \
+      "sentry_key=sentry-secret" | full_validation_redact_stream
+  '
+
+  assert_success
+  assert_output --partial "SERVER_ADMIN_PASSWORD=[REDACTED]"
+  assert_output --partial "ServerPassword=[REDACTED]?RCONEnabled=True"
+  assert_output --partial "AccountKey: [REDACTED]"
+  assert_output --partial "access_token=[REDACTED]"
+  assert_output --partial "sentry_key=[REDACTED]"
+  refute_output --partial "admin-secret"
+  refute_output --partial "join-secret"
+  refute_output --partial "premium-secret"
+  refute_output --partial "token-secret"
+  refute_output --partial "sentry-secret"
+}
+
+@test "full_validation_read_api_state accepts manager and commented template syntax" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/test/run_full_local_validation.sh"
+    REPO_ROOT="$BATS_TEST_TMPDIR/api-state-root"
+    INSTANCE_NAME=demo
+    mkdir -p "$REPO_ROOT/Instance_demo"
+    printf "%s\n" "      - API=TRUE  # template setting" > "$REPO_ROOT/Instance_demo/docker-compose-demo.yaml"
+    printf "commented=%s\n" "$(full_validation_read_api_state)"
+    printf "%s\n" "      - API=FALSE" > "$REPO_ROOT/Instance_demo/docker-compose-demo.yaml"
+    printf "managed=%s\n" "$(full_validation_read_api_state)"
+  '
+
+  assert_success
+  assert_output --partial "commented=TRUE"
+  assert_output --partial "managed=FALSE"
+}
+
+@test "runtime matrix orders API, RCON, restart, shutdown, and plain-mode checks" {
+  run env REPO_ROOT="$PROJECT_ROOT" TRACE_FILE="$BATS_TEST_TMPDIR/runtime-trace" bash -lc '
+    set -e
+    source "$REPO_ROOT/test/run_full_local_validation.sh"
+    INSTANCE_NAME=matrix
+    full_validation_record_api_state() { echo record >> "$TRACE_FILE"; }
+    full_validation_container_running() { return 1; }
+    full_validation_set_api_state() { echo "api:$1" >> "$TRACE_FILE"; }
+    full_validation_start_and_validate() { echo "start:$1" >> "$TRACE_FILE"; }
+    full_validation_check_logs_command() { echo logs >> "$TRACE_FILE"; }
+    full_validation_run_rcon_matrix() { echo rcon >> "$TRACE_FILE"; }
+    full_validation_manager() { echo "manager:$*" >> "$TRACE_FILE"; }
+    full_validation_wait_until_ready() { echo ready >> "$TRACE_FILE"; }
+    full_validation_validate_api_mode() { echo "verify:$1" >> "$TRACE_FILE"; }
+    full_validation_assert_stopped() { echo stopped >> "$TRACE_FILE"; }
+    full_validation_run_runtime_matrix
+    cat "$TRACE_FILE"
+  '
+
+  assert_success
+  assert_line "record"
+  assert_output --partial $'api:TRUE\nstart:TRUE\nlogs\nrcon'
+  assert_output --partial "manager:-restart 0 matrix"
+  assert_output --partial "manager:-shutdown 0 matrix"
+  assert_output --partial $'api:FALSE\nstart:FALSE'
+  assert_output --partial $'api:TRUE\nstart:TRUE'
 }
 
 @test "full_validation_parse_args rejects invalid branch modes" {

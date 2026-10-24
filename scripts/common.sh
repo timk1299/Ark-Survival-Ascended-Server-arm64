@@ -17,6 +17,128 @@ env_value_is_truthy() {
   esac
 }
 
+shared_update_policy_file() {
+  echo "${SHARED_UPDATE_POLICY_FILE:-${ASA_DIR:-/home/pok/arkserver}/.pok-manager/shared_update_policy.env}"
+}
+
+shared_update_policy_load() {
+  local policy_file=""
+
+  SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED=""
+  SHARED_POLICY_CONFIGURED_INSTANCE_COUNT=0
+  SHARED_POLICY_CONFIGURED_INSTANCES=""
+  SHARED_POLICY_BLOCKING_INSTANCES=""
+  SHARED_POLICY_MAX_RESTART_NOTICE_MINUTES=0
+
+  if [ -n "${POK_SHARED_AUTOMATIC_UPDATES:-}" ]; then
+    SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED="${POK_SHARED_AUTOMATIC_UPDATES}"
+    SHARED_POLICY_CONFIGURED_INSTANCE_COUNT="${POK_SHARED_CONFIGURED_INSTANCE_COUNT:-0}"
+    SHARED_POLICY_BLOCKING_INSTANCES="${POK_SHARED_BLOCKING_INSTANCES:-}"
+    SHARED_POLICY_MAX_RESTART_NOTICE_MINUTES="${POK_SHARED_MAX_RESTART_NOTICE_MINUTES:-0}"
+    return 0
+  fi
+  policy_file=$(shared_update_policy_file)
+  [ -f "$policy_file" ] || return 1
+
+  # This file is written atomically by POK-manager.sh and contains only shell-escaped
+  # scalar assignments. Keep the loaded names separate from runtime environment names.
+  local AUTOMATIC_UPDATES_ALLOWED=""
+  local CONFIGURED_INSTANCE_COUNT=0
+  local CONFIGURED_INSTANCES=""
+  local BLOCKING_INSTANCES=""
+  local MAX_RESTART_NOTICE_MINUTES=0
+  # shellcheck disable=SC1090
+  source "$policy_file"
+
+  SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED="${AUTOMATIC_UPDATES_ALLOWED:-FALSE}"
+  SHARED_POLICY_CONFIGURED_INSTANCE_COUNT="${CONFIGURED_INSTANCE_COUNT:-0}"
+  SHARED_POLICY_CONFIGURED_INSTANCES="${CONFIGURED_INSTANCES:-}"
+  SHARED_POLICY_BLOCKING_INSTANCES="${BLOCKING_INSTANCES:-}"
+  SHARED_POLICY_MAX_RESTART_NOTICE_MINUTES="${MAX_RESTART_NOTICE_MINUTES:-0}"
+  return 0
+}
+
+shared_update_policy_allows_automatic_updates() {
+  env_value_is_truthy "${POK_MANUAL_SHARED_UPDATE:-FALSE}" && return 0
+
+  if shared_update_policy_load; then
+    env_value_is_truthy "$SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED"
+    return $?
+  fi
+
+  # Backward-compatible single-container fallback. Managed multi-instance starts
+  # publish the authoritative aggregate policy before Docker is launched.
+  ! env_value_is_truthy "${API:-FALSE}" && env_value_is_truthy "${UPDATE_SERVER:-FALSE}"
+}
+
+shared_update_policy_print_block() {
+  shared_update_policy_load || true
+  echo "[WARNING] Automatic ARK file updates are disabled for this shared installation."
+  if [ -n "${SHARED_POLICY_BLOCKING_INSTANCES:-}" ]; then
+    echo "[WARNING] Blocking instance settings: ${SHARED_POLICY_BLOCKING_INSTANCES}"
+  else
+    echo "[WARNING] This instance has API=TRUE or UPDATE_SERVER=FALSE."
+  fi
+  echo "[WARNING] Existing server files will remain unchanged and the current installed build will start."
+  echo "[WARNING] Stop all managed instances and run ./POK-manager.sh -update for manual maintenance."
+}
+
+resolve_pinned_proton() {
+  local proton_base="${POK_PROTON_BASE_DIR:-/home/pok/.steam/steam/compatibilitytools.d}"
+  local canonical_path="${proton_base}/GE-Proton-Current"
+  local version_file="${proton_base}/.pok-proton-version"
+  local resolved_path=""
+  local expected_version=""
+  local resolved_version=""
+
+  POK_PROTON_DIR=""
+  POK_PROTON_EXECUTABLE=""
+  POK_PROTON_VERSION=""
+
+  if [ ! -f "$version_file" ]; then
+    echo "ERROR: Pinned Proton version metadata is missing: $version_file" >&2
+    return 1
+  fi
+  expected_version=$(tr -d '\r\n' < "$version_file")
+  [ -n "$expected_version" ] || {
+    echo "ERROR: Pinned Proton version metadata is empty." >&2
+    return 1
+  }
+
+  resolved_path=$(readlink -f "$canonical_path" 2>/dev/null || true)
+  if [ -z "$resolved_path" ] || [ ! -x "$resolved_path/proton" ]; then
+    echo "ERROR: Pinned Proton executable is unavailable through $canonical_path" >&2
+    return 1
+  fi
+
+  resolved_version=$(basename "$resolved_path")
+  if [ "$resolved_version" != "$expected_version" ]; then
+    echo "ERROR: Proton target mismatch: expected $expected_version, found $resolved_version" >&2
+    return 1
+  fi
+
+  POK_PROTON_DIR="$resolved_path"
+  POK_PROTON_EXECUTABLE="$resolved_path/proton"
+  POK_PROTON_VERSION="$resolved_version"
+  return 0
+}
+
+set_pinned_proton_environment() {
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/pok-runtime-$(id -u)}"
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH="${STEAM_COMPAT_CLIENT_INSTALL_PATH:-/home/pok/.steam/steam}"
+  export STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH:-${STEAM_COMPAT_CLIENT_INSTALL_PATH}/steamapps/compatdata/2430930}"
+  export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+
+  mkdir -p "$XDG_RUNTIME_DIR" "$STEAM_COMPAT_CLIENT_INSTALL_PATH" "$STEAM_COMPAT_DATA_PATH"
+  chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+}
+
+run_with_pinned_proton() {
+  resolve_pinned_proton || return 1
+  set_pinned_proton_environment || return 1
+  "$POK_PROTON_EXECUTABLE" runinprefix "$@"
+}
+
 common_init() {
   USERNAME=anonymous
   APPID=2430930
@@ -25,7 +147,10 @@ common_init() {
   STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/${APPID}"
   STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
   PID_FILE="/home/pok/${INSTANCE_NAME}_ark_server.pid"
-  TEMP_DOWNLOAD_ROOT="${TEMP_DOWNLOAD_ROOT:-/tmp}"
+  # Keep multi-gigabyte SteamCMD staging on the shared server filesystem.
+  # Container /tmp normally lives in Docker's writable layer, which may be
+  # much smaller than the host filesystem already validated for ASA updates.
+  TEMP_DOWNLOAD_ROOT="${TEMP_DOWNLOAD_ROOT:-${ASA_DIR}/.pok-manager/update/staging}"
   TEMP_DOWNLOAD_PREFIX="arkserver_download"
 
   RCON_HOST="localhost"
@@ -34,8 +159,136 @@ common_init() {
   RCON_PATH="/usr/local/bin/rcon-cli"
   EOS_DEPLOYMENT_ID="ad9a8feffb3b4b2ca315546f038c3ae2"
   EOS_MATCHMAKING_BASE="https://api.epicgames.dev/wildcard/matchmaking/v1"
+  ASAAPI_MANAGER_PATH="${POK_SCRIPTS_DIR:-/home/pok/scripts}/helpers/asaapi_manager.py"
+  ASAAPI_STATE_DIR="${ASA_DIR}/.pok-manager/asaapi"
+  DEPLOYMENT_MANAGER_PATH="${POK_SCRIPTS_DIR:-/home/pok/scripts}/helpers/server_deployment_manager.py"
+  DEPLOYMENT_STATE_DIR="${ASA_DIR}/.pok-manager/deployments"
+  ROLLBACK_STAGING_DIR="${ASA_DIR}/.pok-manager/rollback/staging"
+  SHARED_UPDATE_POLICY_FILE="${ASA_DIR}/.pok-manager/shared_update_policy.env"
+  ASAAPI_WAIT_MARKER="/tmp/pok_asaapi_waiting"
+  ASAAPI_LAUNCH_MARKER="/tmp/pok_asaapi_launch_started"
   export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
   export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
+}
+
+rollback_state_is_active() {
+  [ -f "${DEPLOYMENT_STATE_DIR}/active_rollback.json" ]
+}
+
+deployment_state_field() {
+  local source="$1"
+  local name="$2"
+
+  python3 -B "$DEPLOYMENT_MANAGER_PATH" field \
+    --state-dir "$DEPLOYMENT_STATE_DIR" \
+    --source "$source" \
+    --name "$name" 2>/dev/null
+}
+
+rollback_retry_is_available() {
+  local public_build_id="$1"
+  local failed_build_id
+  local failed_hash
+  local failed_timestamp
+  local remote_timestamp
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  rollback_state_is_active || return 1
+  failed_build_id=$(deployment_state_field active failed_build_id || true)
+  if [ -n "$public_build_id" ] && [ "$public_build_id" != "$failed_build_id" ]; then
+    echo "[INFO] A newer Steam build is available while rollback protection is active."
+    return 0
+  fi
+
+  failed_hash=$(deployment_state_field active failed_executable_sha256 || true)
+  failed_timestamp=$(deployment_state_field active failed_cache_last_modified || true)
+  [ -n "$failed_hash" ] && [ -n "$failed_timestamp" ] || return 1
+  remote_timestamp=$(python3 -B "$ASAAPI_MANAGER_PATH" cache-timestamp \
+    --bin-dir "$bin_dir" --executable-hash "$failed_hash" 2>/dev/null) || return 1
+  if [ -n "$remote_timestamp" ] && [ "$remote_timestamp" != "$failed_timestamp" ]; then
+    echo "[INFO] AsaApi published a changed cache for the failed Steam build."
+    return 0
+  fi
+  return 1
+}
+
+prepare_staged_asaapi_cache() {
+  local staged_server_dir="$1"
+  local staged_bin="${staged_server_dir}/ShooterGame/Binaries/Win64"
+  local live_bin="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  [ -f "${staged_bin}/ArkAscendedServer.exe" ] || {
+    echo "[ERROR] Staged ARK server executable is missing."
+    return 1
+  }
+  if [ ! -f "${ASAAPI_STATE_DIR}/source.json" ] || \
+      [ "$(jq -r '.source // empty' "${ASAAPI_STATE_DIR}/source.json" 2>/dev/null)" != "managed" ]; then
+    echo "[ERROR] Rollback preflight requires the managed AsaApi release; AsaApi_Custom is unsupported."
+    return 1
+  fi
+  mkdir -p "$staged_bin"
+  if [ -f "${live_bin}/config.json" ]; then
+    cp "${live_bin}/config.json" "${staged_bin}/config.json" || return 1
+  else
+    echo "[ERROR] Managed AsaApi config.json is missing from the live server files."
+    return 1
+  fi
+  echo "[INFO] Validating an executable-specific AsaApi cache before changing live files..."
+  python3 -B "$ASAAPI_MANAGER_PATH" prepare-cache \
+    --bin-dir "$staged_bin" \
+    --state-dir "$ASAAPI_STATE_DIR" \
+    --server-exe "${staged_bin}/ArkAscendedServer.exe"
+}
+
+record_failed_rollback_retry() {
+  local staged_server_dir="$1"
+  local staged_bin="${staged_server_dir}/ShooterGame/Binaries/Win64"
+  local staged_exe="${staged_bin}/ArkAscendedServer.exe"
+  local incompatible_marker="${staged_bin}/ArkApi/Cache/incompatible_cache.json"
+  local executable_hash=""
+  local build_id=""
+  local cache_timestamp=""
+
+  rollback_state_is_active || return 0
+  [ -f "$staged_exe" ] || return 0
+  executable_hash=$(sha256sum "$staged_exe" | awk '{print $1}')
+  build_id=$(get_current_build_id 2>/dev/null || true)
+  if [ -f "$incompatible_marker" ] && \
+      [ "$(jq -r '.executable_hash // empty' "$incompatible_marker" 2>/dev/null)" = "$executable_hash" ]; then
+    cache_timestamp=$(jq -r '.last_modified // empty' "$incompatible_marker" 2>/dev/null)
+  fi
+  python3 -B "$DEPLOYMENT_MANAGER_PATH" update-failure \
+    --state-dir "$DEPLOYMENT_STATE_DIR" \
+    --failed-build-id "$build_id" \
+    --executable-hash "$executable_hash" \
+    --failed-cache-last-modified "$cache_timestamp" || true
+}
+
+record_successful_api_deployment() {
+  local api_log_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+  local api_log=""
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  [ "${API}" = "TRUE" ] || return 0
+  [ -f "$ASAAPI_LAUNCH_MARKER" ] || return 0
+  api_log=$(find "$api_log_dir" -name 'ArkApi_*.log' -type f -newer "$ASAAPI_LAUNCH_MARKER" \
+    -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
+  if [ -z "$api_log" ] || ! grep -q "API was successfully loaded" "$api_log" || \
+      ! grep -q "Loaded all plugins" "$api_log"; then
+    echo "[WARNING] AsaApi startup was not recorded as known-good because fresh plugin-load evidence is incomplete."
+    return 0
+  fi
+  if python3 -B "$DEPLOYMENT_MANAGER_PATH" record-success \
+      --state-dir "$DEPLOYMENT_STATE_DIR" \
+      --server-exe "${bin_dir}/ArkAscendedServer.exe" \
+      --appmanifest "$PERSISTENT_ACF_FILE" \
+      --api-source "${ASAAPI_STATE_DIR}/source.json" \
+      --cache-metadata "${bin_dir}/ArkApi/Cache/cached_key.cache" \
+      --instance-name "${INSTANCE_NAME:-default}" >/dev/null; then
+    echo "[INFO] Recorded this fully started AsaApi deployment as rollback-compatible."
+  else
+    echo "[WARNING] Unable to record this startup as a known-good deployment."
+  fi
 }
 
 prepare_runtime_env() {
@@ -44,121 +297,33 @@ prepare_runtime_env() {
   validate_server_password
 }
 
-# Function to initialize the Proton prefix
 initialize_proton_prefix() {
-  echo "Initializing Proton prefix at ${STEAM_COMPAT_DATA_PATH}..."
-  
-  # Make sure the prefix directory exists with correct permissions
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx"
-  
-  # Important: Ensure the top-level directory has proper permissions without recursing
-  chmod 755 "${STEAM_COMPAT_DATA_PATH}"
-  
-  # Create all necessary subdirectories with proper permissions
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)"
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser"
-  
-  # Create dosdevices directory and symlinks - missing in original code
-  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices"
-  # The error was specifically about this symlink
-  ln -sf "../drive_c" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/c:"
-  ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/d::"
-  ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/e::"
-  ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/f::"
-  
-  # Ensure consistent proton path detection by checking multiple common locations
-  PROTON_PATHS=(
-    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current"
-    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21"
-    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25"
-    "/usr/local/bin"
-  )
-  
-  PROTON_PATH=""
-  for path in "${PROTON_PATHS[@]}"; do
-    if [ -f "${path}/proton" ]; then
-      PROTON_PATH="${path}"
-      echo "Found Proton at: ${PROTON_PATH}"
-      break
-    fi
-  done
-  
-  if [ -z "$PROTON_PATH" ]; then
-    echo "WARNING: Could not find Proton executable. Creating a symlink to the expected location."
-    # If not found, try to detect any available proton directory
-    FOUND_DIR=$(find /home/pok/.steam/steam/compatibilitytools.d -name "GE-Proton*" -type d | head -n 1)
-    if [ -n "$FOUND_DIR" ]; then
-      echo "Found Proton directory at: ${FOUND_DIR}, creating symlinks"
-      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current"
-      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21"
-      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25"
-      PROTON_PATH="${FOUND_DIR}"
-    else
-      echo "ERROR: No Proton installations found! Initialization may fail."
-    fi
+  local marker=""
+
+  resolve_pinned_proton || return 1
+  set_pinned_proton_environment || return 1
+  marker="${STEAM_COMPAT_DATA_PATH}/.pok-proton-prefix-version"
+
+  if [ -s "$WINEPREFIX/system.reg" ] && [ -s "$WINEPREFIX/user.reg" ] && \
+      [ -f "$marker" ] && [ "$(tr -d '\r\n' < "$marker")" = "$POK_PROTON_VERSION" ]; then
+    echo "Using initialized Proton prefix for $POK_PROTON_VERSION."
+    return 0
   fi
-  
-  # Force reset the prefix configuration if it exists but might be corrupted
-  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx" ]; then
-    echo "Cleaning up previous Proton prefix configuration..."
-    
-    # Backup existing registry files if they exist
-    for reg_file in "system.reg" "user.reg" "userdef.reg"; do
-      if [ -f "${STEAM_COMPAT_DATA_PATH}/pfx/${reg_file}" ]; then
-        cp "${STEAM_COMPAT_DATA_PATH}/pfx/${reg_file}" "${STEAM_COMPAT_DATA_PATH}/pfx/${reg_file}.bak" 2>/dev/null || true
-      fi
-    done
-    
-    # Remove registry files to force clean initialization
-    rm -f "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg" 2>/dev/null || true
-    rm -f "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" 2>/dev/null || true
-    rm -f "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg" 2>/dev/null || true
+
+  echo "Initializing Proton prefix with $POK_PROTON_VERSION at ${STEAM_COMPAT_DATA_PATH}..."
+  # Proton performs its own wineboot while creating/upgrading the compatdata
+  # prefix. A console command gives that setup path a reliable zero exit code;
+  # invoking wineboot.exe directly can return 3 even after successful setup.
+  if ! "$POK_PROTON_EXECUTABLE" runinprefix cmd.exe /c ver; then
+    echo "WARNING: Proton's initialization command returned nonzero; validating the resulting prefix." >&2
   fi
-  
-  # Create minimal registry files
-  echo "Creating minimal Wine registry files..."
-  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  echo ";; All keys relative to \\\\Machine" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  
-  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo ";; All keys relative to \\\\User\\\\S-1-5-21-0-0-0-1000" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "\"*version\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "\"vcrun2022\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  
-  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  echo ";; All keys relative to \\\\User\\\\DefUser" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  
-  # Make sure tracked_files exists
-  touch "${STEAM_COMPAT_DATA_PATH}/tracked_files" 2>/dev/null || true
-  
-  # Ensure created files have correct permissions (non-recursive to save time on large prefixes)
-  chmod 755 "${STEAM_COMPAT_DATA_PATH}/pfx" 2>/dev/null || true
-  
-  # Set necessary environment variables
-  export XDG_RUNTIME_DIR=/run/user/$(id -u)
-  export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
-  export STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}"
-  export WINEDLLOVERRIDES="version=n,b"
-  
-  # Sync filesystem to ensure all changes are written
-  sync
-  
-  # Sleep to ensure changes are propagated
-  sleep 5
-  
+  if [ ! -s "$WINEPREFIX/system.reg" ] || [ ! -s "$WINEPREFIX/user.reg" ]; then
+    echo "ERROR: Proton initialization did not create a complete registry." >&2
+    return 1
+  fi
+
+  printf '%s\n' "$POK_PROTON_VERSION" > "$marker"
   echo "Proton prefix initialization completed."
-  return 0
 }
 
 # Timezone utility functions
@@ -782,6 +947,7 @@ steamcmd_download_to_dir() {
 
   /opt/steamcmd/steamcmd.sh \
     +force_install_dir "$target_dir" \
+    +@sSteamCmdForcePlatformType "windows" \
     +login "$USERNAME" \
     +app_update $update_args \
     +quit
@@ -953,6 +1119,15 @@ perform_staged_server_download() {
     return 1
   fi
 
+  if rollback_state_is_active; then
+    echo "[INFO] Rollback protection is active; preflighting the candidate latest build with AsaApi."
+    if ! prepare_staged_asaapi_cache "$temp_dir"; then
+      record_failed_rollback_retry "$temp_dir"
+      echo "[ERROR] Candidate latest build is still incompatible with the managed AsaApi cache."
+      return 1
+    fi
+  fi
+
   if ! sync_temp_into_live_dir "$temp_dir" "$ASA_DIR"; then
     echo "[ERROR] Failed to sync temporary download into live server directory"
     return 1
@@ -966,6 +1141,14 @@ perform_staged_server_download() {
   ensure_server_file_permissions "$ASA_DIR"
 
   cleanup_steam_dlls "$ASA_DIR"
+
+  if rollback_state_is_active; then
+    python3 -B "$DEPLOYMENT_MANAGER_PATH" clear-active --state-dir "$DEPLOYMENT_STATE_DIR" || {
+      echo "[ERROR] Latest files were installed but rollback protection state could not be cleared."
+      return 1
+    }
+    echo "[SUCCESS] Compatible latest build installed; rollback protection was cleared."
+  fi
 
   sync
   sleep 2
@@ -1068,12 +1251,18 @@ mark_other_instances_dirty() {
   echo "[INFO] Finished marking other instances as dirty"
 }
 
-# Enhanced function to check if server needs update (includes dirty flag check)
+# Enhanced function to check if server needs update (includes dirty flag and coordination check)
 server_needs_update_or_restart() {
   # First check if this instance has a dirty flag (marked by another instance)
   if has_dirty_flag; then
     echo "[INFO] Instance has dirty flag - restart required due to server files update by another instance"
     return 0  # Needs restart
+  fi
+
+  # Check if an active coordination cycle exists
+  if declare -f update_coordination_has_active_cycle >/dev/null 2>&1 && update_coordination_has_active_cycle; then
+    echo "[INFO] Active update coordination cycle detected - restart/update required"
+    return 0
   fi
   
   # Then do the normal build ID comparison
@@ -1089,6 +1278,15 @@ server_needs_update_or_restart() {
   if ! [[ "$saved_build_id" =~ ^[0-9]+$ ]]; then
     echo "[WARNING] Saved build ID has invalid format: '$saved_build_id'. Will attempt update."
     return 0  # Force update
+  fi
+
+  if rollback_state_is_active; then
+    if rollback_retry_is_available "$current_build_id"; then
+      echo "[INFO] Rollback protection permits a preflighted retry of the latest server files."
+      return 0
+    fi
+    echo "[INFO] Holding the known-good rollback deployment; the failed Steam build and AsaApi cache are unchanged."
+    return 1
   fi
   
   # Strip whitespace
@@ -1192,7 +1390,7 @@ cleanup_legacy_locks() {
           local age_hours=$(((dirty_age % 86400) / 3600))
           local age_minutes=$(((dirty_age % 3600) / 60))
           
-          if [ "$context" = "aggressive" ] || [ $dirty_age -ge $dirty_threshold ]; then
+          if [ "$context" = "aggressive" ] || [ $dirty_age -ge $dirty_threshold ] || { [ "$context" = "startup" ] && [ -n "${INSTANCE_NAME:-}" ] && [ "$(basename "$dirty_file")" = "${INSTANCE_NAME}.dirty" ]; }; then
             echo "[INFO] Removing $(basename "$dirty_file") (age: ${age_days}d ${age_hours}h ${age_minutes}m)"
             rm -f "$dirty_file"
             cleaned_count=$((cleaned_count + 1))
@@ -1224,8 +1422,9 @@ cleanup_all_flags() {
   cleanup_legacy_locks "aggressive"
 }
 
-# Function to install ArkServerAPI
-install_ark_server_api() {
+# Legacy installer retained temporarily for source compatibility. The managed
+# installer below is the only implementation used by the runtime.
+_legacy_install_ark_server_api() {
   if [ "${API}" != "TRUE" ]; then
     echo "AsaApi installation skipped (API is not set to TRUE)"
     return 0
@@ -1431,14 +1630,14 @@ install_ark_server_api() {
   if [ "$first_install" = "true" ]; then
     echo ">> Running VC++ installer with Proton directly..."
   fi
-  if [ -d "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21" ]; then
+  if resolve_pinned_proton; then
     STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
     STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-    /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21/proton run "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart || true
+    "$POK_PROTON_EXECUTABLE" run "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart || true
     
     STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
     STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-    /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21/proton run "$proton_drive_c/temp/vc_redist.x86.exe" /quiet /norestart || true
+    "$POK_PROTON_EXECUTABLE" run "$proton_drive_c/temp/vc_redist.x86.exe" /quiet /norestart || true
   fi
   
   # Allow more time for the installation to complete
@@ -1521,6 +1720,104 @@ install_ark_server_api() {
     
     return 1
   fi
+}
+
+# Install the pinned AsaApi release or an explicit AsaApi_Custom override.
+install_ark_server_api() {
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  if [ "${API}" != "TRUE" ]; then
+    echo "AsaApi installation skipped (API is not set to TRUE)"
+    return 0
+  fi
+
+  echo "---- Installing/Verifying AsaApi ----"
+
+  if [ ! -f "${STEAM_COMPAT_DATA_PATH}/tracked_files" ] || [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
+    echo "Proton environment not fully initialized. Initializing before AsaApi installation..."
+    initialize_proton_prefix
+  fi
+
+  if [ ! -f "$ASAAPI_MANAGER_PATH" ]; then
+    echo "ERROR: AsaApi manager helper was not found at $ASAAPI_MANAGER_PATH"
+    return 1
+  fi
+
+  mkdir -p "$bin_dir" "$ASAAPI_STATE_DIR" "${bin_dir}/logs"
+  if ! python3 -B "$ASAAPI_MANAGER_PATH" install \
+      --bin-dir "$bin_dir" \
+      --state-dir "$ASAAPI_STATE_DIR"; then
+    return 1
+  fi
+
+  if [ ! -f "${bin_dir}/AsaApiLoader.exe" ] || [ ! -f "${bin_dir}/ArkApi/AsaApi.dll" ]; then
+    echo "ERROR: AsaApi source preparation completed without the required loader files."
+    return 1
+  fi
+
+  chmod +x "${bin_dir}/AsaApiLoader.exe" 2>/dev/null || true
+  echo "✅ AsaApi source files are ready."
+  return 0
+}
+
+asaapi_source_is_custom() {
+  [ -f "${ASAAPI_STATE_DIR}/source.json" ] || return 1
+  [ "$(jq -r '.source // empty' "${ASAAPI_STATE_DIR}/source.json" 2>/dev/null)" = "custom" ]
+}
+
+prepare_ark_server_api_cache() {
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+  local server_exe="${bin_dir}/ArkAscendedServer.exe"
+
+  python3 -B "$ASAAPI_MANAGER_PATH" prepare-cache \
+    --bin-dir "$bin_dir" \
+    --state-dir "$ASAAPI_STATE_DIR" \
+    --server-exe "$server_exe"
+}
+
+ensure_ark_server_api_ready() {
+  local retry_seconds="${ASAAPI_CACHE_RETRY_SECONDS:-60}"
+  local wait_message="starting: waiting for AsaApi cache"
+  local cache_output=""
+  local cache_error=""
+
+  if ! [[ "$retry_seconds" =~ ^[0-9]+$ ]] || [ "$retry_seconds" -lt 5 ]; then
+    retry_seconds=60
+  fi
+
+  while true; do
+    if [ -e "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApi_Custom" ]; then
+      wait_message="starting: waiting for a valid AsaApi_Custom override"
+    else
+      wait_message="starting: waiting for AsaApi cache"
+    fi
+    printf '%s\n' "$wait_message" > "$ASAAPI_WAIT_MARKER"
+
+    if install_ark_server_api; then
+      if asaapi_source_is_custom; then
+        rm -f "$ASAAPI_WAIT_MARKER"
+        echo "⚠️ AsaApi_Custom is active; POK cache management is intentionally bypassed."
+        return 0
+      fi
+
+      if cache_output=$(prepare_ark_server_api_cache 2>&1); then
+        [ -n "$cache_output" ] && printf '%s\n' "$cache_output"
+        rm -f "$ASAAPI_WAIT_MARKER"
+        echo "✅ Managed AsaApi cache is verified and ready."
+        return 0
+      fi
+
+      [ -n "$cache_output" ] && printf '%s\n' "$cache_output"
+      cache_error=$(printf '%s\n' "$cache_output" | sed -n 's/^\[ERROR\] //p' | tail -n 1)
+      if [ -n "$cache_error" ]; then
+        wait_message="starting: ${cache_error}"
+      fi
+    fi
+
+    printf '%s\n' "$wait_message" > "$ASAAPI_WAIT_MARKER"
+    echo "⚠️ $wait_message. Retrying in ${retry_seconds} seconds."
+    sleep "$retry_seconds"
+  done
 }
 
 # Function to ensure dosdevices are properly set up

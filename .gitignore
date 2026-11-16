@@ -29,6 +29,7 @@
 !/.github/**
 !/changelog.txt
 !/dockerfile
+!/fex-select.sh
 !/build.sh
 !/docker-compose.yaml
 !/LICENSE.txt

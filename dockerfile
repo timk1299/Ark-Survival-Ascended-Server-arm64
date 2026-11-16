@@ -77,20 +77,28 @@ RUN set -eux; \
     test -s /out/vcredist/vc_redist.x64.exe
 
 # ---- FEX interpreter from the official FEX PPA ----
+# Only used for SteamCMD; the game server uses the FEX DLLs bundled with GE-Proton.
+# All three CPU variants are installed to /opt/fex/<variant>/; fex-select.sh
+# (installed as /usr/bin/FEX) picks the right one when the container runs.
 # Only the interpreter and its server are needed; the package's GUI tools and
-# thunk libraries are left out. armv8.0 runs on every arm64 CPU, and it only
-# has to run SteamCMD. To change the package, also change version and checksum
-# (see https://ppa.launchpadcontent.net/fex-emu/fex/ubuntu/dists/resolute/main/binary-arm64/Packages.gz).
+# thunk libraries are left out. To update, change the version and all three
+# checksums (see https://ppa.launchpadcontent.net/fex-emu/fex/ubuntu/dists/resolute/main/binary-arm64/Packages.gz).
 FROM fetch AS fex
-ARG FEX_PACKAGE=fex-emu-armv8.0
-ARG FEX_DEB_VERSION=2610-1~r
-ARG FEX_DEB_SHA256=15cbec4226dc5e587fb7c885613d0391c4343030b3ee3cefcd5870e624295c22
+ARG FEX_DEB_VERSION=2611.1-1~r
+ARG FEX_SHA256_ARMV8_0=ede3696d16ed6649ff219bd37b2cadbbb4849e19993854680f3e0d95d61d99b7
+ARG FEX_SHA256_ARMV8_2=8b67b6348f3f08d55aea116705dc8c527a634082b970cb170d04f561d76aa299
+ARG FEX_SHA256_ARMV8_4=e7a698edb9f6ccf8c5559b971d9fd2816cf46b89a5d04f170b189795a8f09cb5
 RUN set -eux; \
-    curl -fsSL "https://ppa.launchpadcontent.net/fex-emu/fex/ubuntu/pool/main/f/${FEX_PACKAGE}/${FEX_PACKAGE}_${FEX_DEB_VERSION}_arm64.deb" -o /tmp/fex.deb; \
-    echo "${FEX_DEB_SHA256}  /tmp/fex.deb" | sha256sum -c -; \
-    dpkg-deb -x /tmp/fex.deb /tmp/fex; \
-    install -D -m 755 /tmp/fex/usr/bin/FEX /out/usr/bin/FEX; \
-    install -D -m 755 /tmp/fex/usr/bin/FEXServer /out/usr/bin/FEXServer
+    for entry in "armv8.0 ${FEX_SHA256_ARMV8_0}" "armv8.2 ${FEX_SHA256_ARMV8_2}" "armv8.4 ${FEX_SHA256_ARMV8_4}"; do \
+      variant="${entry%% *}"; sha256="${entry#* }"; package="fex-emu-${variant}"; \
+      curl -fsSL "https://ppa.launchpadcontent.net/fex-emu/fex/ubuntu/pool/main/f/${package}/${package}_${FEX_DEB_VERSION}_arm64.deb" -o /tmp/fex.deb; \
+      echo "${sha256}  /tmp/fex.deb" | sha256sum -c -; \
+      rm -rf /tmp/fex; \
+      dpkg-deb -x /tmp/fex.deb /tmp/fex; \
+      install -D -m 755 /tmp/fex/usr/bin/FEX "/out/opt/fex/${variant}/FEX"; \
+      install -D -m 755 /tmp/fex/usr/bin/FEXServer "/out/opt/fex/${variant}/FEXServer"; \
+    done; \
+    rm -rf /tmp/fex /tmp/fex.deb
 
 # ---- Minimal x86 rootfs for SteamCMD ----
 # SteamCMD is 32-bit, so it needs the 32-bit C/C++ runtime and CA certificates.
@@ -188,7 +196,8 @@ RUN set -ex; \
     install -m 1777 -o pok -g pok /dev/null /tmp/.X0-lock
 
 # FEX interpreter and the x86 rootfs, only used for SteamCMD
-COPY --from=fex /out/usr/bin/ /usr/bin/
+COPY --from=fex /out/opt/fex/ /opt/fex/
+COPY --chmod=755 fex-select.sh /usr/bin/FEX
 COPY --from=steam-rootfs /rootfs/ /opt/fex-rootfs/
 RUN set -ex; \
     printf '{"Config":{"RootFS":"/opt/fex-rootfs"}}\n' > /home/pok/.fex-emu/Config.json; \
